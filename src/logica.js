@@ -82,4 +82,20 @@ function comparar(prev, nuevo) {
 
 function limite(horas, pct) { return Math.floor(horas * pct / 100); }
 
-module.exports = { MODULOS, HORARIO, codigoDe, normalizar, comparar, limite };
+// Cuándo toca la próxima lectura automática (en milisegundos desde 1970).
+// - Se cuenta desde la última lectura buena, aunque la app se haya cerrado o el ordenador se haya apagado.
+// - Si el último intento falló (sin internet, Educamos caído…), se reintenta en 30 min (o antes si el intervalo es menor).
+// - Si falló porque hay que iniciar sesión y no hay contraseña guardada, no se reintenta solo: espera al usuario.
+const REINTENTO_MIN = 30;
+function proximaLectura({ ultimaBuena, ultimoIntento, intervaloMin }) {
+  const iv = Math.max(15, Number(intervaloMin) || 60) * 60000;
+  const base = ultimaBuena ? Date.parse(ultimaBuena) : 0;
+  let prox = base ? base + iv : 0;
+  if (ultimoIntento && !ultimoIntento.ok && Date.parse(ultimoIntento.t) >= base) {
+    if (ultimoIntento.esperaUsuario) return Infinity;
+    prox = Date.parse(ultimoIntento.t) + Math.min(iv, REINTENTO_MIN * 60000);
+  }
+  return prox;
+}
+
+module.exports = { proximaLectura, MODULOS, HORARIO, codigoDe, normalizar, comparar, limite };

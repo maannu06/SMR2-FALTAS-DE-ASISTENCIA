@@ -12,6 +12,7 @@ App de Windows 11 para que el alumnado de **2.º de SMR del IES Brianda de Mendo
 - **¿Y si falto?**: eliges un día de la semana y te dice cuántas faltas sumarías en cada asignatura.
 - **Historial** de todas tus faltas, y puedes apuntar a mano las que aún no han salido en Educamos.
 - Funciona en segundo plano junto al reloj y se abre sola al encender el ordenador.
+- Lee Educamos cada cierto tiempo (de 30 minutos a 24 horas, lo eliges tú). El tiempo se cuenta desde la última lectura, aunque cierres la app o apagues el ordenador.
 
 ## Cómo instalarla
 

@@ -221,7 +221,17 @@
       : D.credFallo ? `La contraseña guardada para «${D.credUsuario}» no funcionó y he dejado de usarla para que Educamos no bloquee tu cuenta. Vuelve a guardarla.`
       : D.credUsuario ? `Guardado: entra sola como «${D.credUsuario}» cuando haga falta.` : 'No hay usuario guardado: si la sesión caduca, te avisaré para que entres tú.';
     $('aj-intervalo').value = String(a.intervaloMin);
-    $('aj-alabrir').checked = !!a.sincronizarAlAbrir;
+    $('aj-alabrir').checked = !!a.leerSiempreAlAbrir;
+    const iv = Number(a.intervaloMin) || 60, ivTxt = iv % 60 ? iv + ' minutos' : plural(iv / 60, 'hora');
+    let prox;
+    if (D.estado.sincronizando) prox = 'Leyendo Educamos ahora.';
+    else if (!D.proximaLectura) prox = 'No volverá a leer sola hasta que inicies sesión en Educamos.';
+    else {
+      const p = new Date(D.proximaLectura), hoy = new Date();
+      const cuando = p - hoy < 90000 ? 'en un momento' : (p.toDateString() === hoy.toDateString() ? 'hoy' : p.toLocaleDateString('es-ES', { weekday: 'long', day: 'numeric', month: 'long' })) + ' a las ' + p.toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' });
+      prox = `Próxima lectura: ${cuando}. Se cuenta ${ivTxt} desde la última lectura, aunque cierres la app o apagues el ordenador.`;
+    }
+    $('aj-proxima').textContent = prox + (D.credUsuario && !D.credFallo ? '' : ' Mientras no guardes tu usuario y contraseña, la app entra en Educamos cada 10 minutos (sin leer las faltas) para que no se cierre la sesión.');
     $('aj-notif').checked = !!a.notificaciones;
     $('aj-ventanas').checked = !!a.mostrarVentanas;
     $('aj-inicio').checked = !!a.iniciarConWindows;
@@ -260,7 +270,7 @@
 
   const ajuste = (id, clave, conv) => $(id).addEventListener('change', e => { const v = conv(e.target); window.app.ajustes({ [clave]: v }); $('aj-msg').textContent = 'Guardado.'; });
   ajuste('aj-intervalo', 'intervaloMin', t => Number(t.value));
-  ajuste('aj-alabrir', 'sincronizarAlAbrir', t => t.checked);
+  ajuste('aj-alabrir', 'leerSiempreAlAbrir', t => t.checked);
   ajuste('aj-notif', 'notificaciones', t => t.checked);
   ajuste('aj-ventanas', 'mostrarVentanas', t => t.checked);
   ajuste('aj-inicio', 'iniciarConWindows', t => t.checked);

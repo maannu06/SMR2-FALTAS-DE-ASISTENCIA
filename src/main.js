@@ -2,7 +2,7 @@ const { app, BrowserWindow, ipcMain, Tray, Menu, Notification, nativeImage, shel
 const path = require('path');
 const fs = require('fs');
 const educamos = require('./educamos');
-const { normalizar, comparar, MODULOS, limite } = require('./logica');
+const { normalizar, comparar, MODULOS, limite, proximaLectura } = require('./logica');
 
 // Que Educamos vea un Chrome normal
 app.userAgentFallback = app.userAgentFallback.replace(/\s?Electron\/\S+/, '').replace(/\s?control-faltas-smr\/\S+/i, '');
@@ -13,7 +13,7 @@ if (PRUEBAS && process.env.FALTAS_DATOS) app.setPath('userData', process.env.FAL
 
 const ICONO = path.join(__dirname, 'icon.png');
 const MIN_SESION = 10; // cada cuántos minutos se "toca" Educamos para que no cierre la sesión
-let win = null, tray = null, timerLectura = null, timerSesion = null, saliendo = false;
+let win = null, tray = null, timerReloj = null, timerSesion = null, saliendo = false;
 let estado = { sincronizando: false, paso: '', error: null, sesion: 'desconocida' };
 
 // ---------- Datos en disco ----------
@@ -23,18 +23,19 @@ const AJUSTES_DEF = {
   becaHoras: null,           // horas lectivas del curso para la beca (null = suma de módulos)
   becaContarJustificadas: true,
   intervaloMin: 60,
-  sincronizarAlAbrir: true,
+  leerSiempreAlAbrir: false,  // si es false, al abrir solo lee si ya toca según el intervalo
   notificaciones: true,
   iniciarConWindows: true,
   segundoPlano: true,
   mostrarVentanas: false,
 };
-let datos = { sync: null, ajustes: { ...AJUSTES_DEF }, manuales: [], cambios: [], credenciales: null };
+let datos = { sync: null, ajustes: { ...AJUSTES_DEF }, manuales: [], cambios: [], credenciales: null, ultimoIntento: null };
 
 function cargar() {
   try {
     const d = JSON.parse(fs.readFileSync(RUTA(), 'utf8'));
     datos = { ...datos, ...d, ajustes: { ...AJUSTES_DEF, ...(d.ajustes || {}) } };
+    delete datos.ajustes.sincronizarAlAbrir; // ajuste antiguo, sustituido por leerSiempreAlAbrir
   } catch (e) {
     if (fs.existsSync(RUTA())) { try { fs.copyFileSync(RUTA(), RUTA() + '.roto-' + Date.now()); } catch (x) {} }
   }
@@ -50,7 +51,8 @@ function guardar() {
 // Lo que ve la ventana: nunca la contraseña
 function publico() {
   const { credenciales, ...resto } = datos;
-  return { ...resto, credUsuario: credenciales ? credenciales.usuario : null, credFallo: !!(credenciales && credenciales.fallo), cifradoDisponible: safeStorage.isEncryptionAvailable(), estado, modulos: MODULOS };
+  const prox = cuandoToca();
+  return { ...resto, proximaLectura: isFinite(prox) ? new Date(Math.max(prox, Date.now())).toISOString() : null, credUsuario: credenciales ? credenciales.usuario : null, credFallo: !!(credenciales && credenciales.fallo), cifradoDisponible: safeStorage.isEncryptionAvailable(), estado, modulos: MODULOS };
 }
 function enviar() {
   if (win && !win.isDestroyed()) win.webContents.send('datos', publico());
@@ -134,6 +136,7 @@ async function sincronizar(origen) {
     const anteriorLimite = datos.sync ? avisosLimite(datos.sync) : [];
     datos.sync = nuevo;
     if (cambios.length) datos.cambios = cambios.concat(datos.cambios || []).slice(0, 300);
+    datos.ultimoIntento = { t: nuevo.actualizado, ok: true };
     guardar();
     estado = { sincronizando: false, paso: '', error: null, sesion: 'ok' };
     if (cambios.length) avisar('Cambios en tus faltas', resumenCambios(cambios));
@@ -142,20 +145,32 @@ async function sincronizar(origen) {
   } catch (e) {
     estado = { ...estado, sincronizando: false, paso: '', error: e.message || String(e) };
     errorDeSesion(e);
+    // Si hay que entrar a mano (sin contraseña guardada o con una que falló), no se reintenta solo
+    const esperaUsuario = (e.codigo === 'login' || e.codigo === 'credenciales') && !credParaUsar();
+    datos.ultimoIntento = { t: new Date().toISOString(), ok: false, esperaUsuario };
+    guardar();
   }
   enviar();
 }
 
+// Mantener viva la sesión solo hace falta si no hay contraseña guardada (con contraseña, la app entra sola).
 async function tocarSesion() {
-  if (estado.sincronizando || estado.sesion === 'login') return;
-  try { await educamos.mantenerSesion({ cred: credParaUsar() }); if (estado.sesion !== 'ok') { estado.sesion = 'ok'; enviar(); } }
+  if (estado.sincronizando || estado.sesion !== 'ok' || credParaUsar()) return;
+  try { await educamos.mantenerSesion({}); }
   catch (e) { if (errorDeSesion(e)) enviar(); }
 }
 
+// La próxima lectura se calcula siempre desde la última lectura guardada (no se reinicia al abrir la app,
+// al cambiar ajustes ni al despertar el ordenador). Un reloj interno lo mira cada minuto sin tocar Educamos.
+function cuandoToca() {
+  return proximaLectura({ ultimaBuena: datos.sync && datos.sync.actualizado, ultimoIntento: datos.ultimoIntento, intervaloMin: datos.ajustes.intervaloMin });
+}
+function comprobar() {
+  if (!estado.sincronizando && Date.now() >= cuandoToca()) sincronizar('auto');
+}
 function programar() {
-  clearInterval(timerLectura); clearInterval(timerSesion);
-  const min = Math.max(15, Number(datos.ajustes.intervaloMin) || 60);
-  timerLectura = setInterval(() => sincronizar('auto'), min * 60 * 1000);
+  clearInterval(timerReloj); clearInterval(timerSesion);
+  timerReloj = setInterval(comprobar, 60 * 1000);
   timerSesion = setInterval(tocarSesion, MIN_SESION * 60 * 1000);
 }
 
@@ -217,7 +232,7 @@ function crearTray() {
 ipcMain.handle('datos:get', () => publico());
 ipcMain.handle('ajustes:set', (_e, parcial) => {
   for (const k of Object.keys(parcial || {})) if (k in AJUSTES_DEF) datos.ajustes[k] = parcial[k];
-  guardar(); programar(); aplicarInicioWindows(); enviar();
+  guardar(); aplicarInicioWindows(); enviar(); comprobar();
   return true;
 });
 ipcMain.handle('manuales:set', (_e, lista) => {
@@ -228,7 +243,7 @@ ipcMain.handle('cambios:borrar', () => { datos.cambios = []; guardar(); enviar()
 ipcMain.handle('sync:ahora', () => { sincronizar('manual'); return true; });
 ipcMain.handle('login:abrir', async () => {
   const ok = await educamos.abrirLogin();
-  if (ok) { estado.sesion = 'ok'; estado.error = null; enviar(); sincronizar('login'); }
+  if (ok) { estado.sesion = 'ok'; estado.error = null; datos.ultimoIntento = null; enviar(); sincronizar('login'); }
   return ok;
 });
 ipcMain.handle('login:cerrar', async () => { await educamos.cerrarSesion(); estado.sesion = 'login'; enviar(); return true; });
@@ -237,7 +252,7 @@ ipcMain.handle('cred:guardar', async (_e, usuario, contrasena) => {
   if (!usuario || !contrasena) return { ok: false, msg: 'Escribe el usuario y la contraseña.' };
   if (!safeStorage.isEncryptionAvailable()) return { ok: false, msg: 'Este ordenador no permite cifrar la contraseña; no la guardo.' };
   datos.credenciales = { usuario, cifrada: safeStorage.encryptString(contrasena).toString('base64'), fallo: false };
-  guardar(); enviar();
+  datos.ultimoIntento = null; guardar(); enviar();
   if (estado.sesion !== 'ok') sincronizar('cred');
   return { ok: true };
 });
@@ -256,12 +271,25 @@ if (!app.requestSingleInstanceLock()) {
     aplicarInicioWindows();
     accesoMenuInicio();
     programar();
-    if (datos.ajustes.sincronizarAlAbrir) setTimeout(() => sincronizar('inicio'), 2500);
-    powerMonitor.on('resume', () => setTimeout(() => sincronizar('auto'), 20000));
+    setTimeout(() => { if (datos.ajustes.leerSiempreAlAbrir) sincronizar('inicio'); else comprobar(); }, 2500);
+    // Al despertar el ordenador solo se lee si ya tocaba
+    powerMonitor.on('resume', () => setTimeout(comprobar, 20000));
     if (PRUEBAS && process.env.FALTAS_CAPTURA) capturasDePrueba(process.env.FALTAS_CAPTURA);
+    if (PRUEBAS && process.env.FALTAS_GUION) guionDePrueba(process.env.FALTAS_GUION);
   });
   app.on('before-quit', () => { saliendo = true; });
   app.on('window-all-closed', () => { if (!datos.ajustes.segundoPlano) app.quit(); });
+}
+
+// Solo para pruebas del desarrollador: ejecuta pasos en la ventana como si los hiciera el usuario
+async function guionDePrueba(ruta) {
+  const pasos = JSON.parse(fs.readFileSync(ruta, 'utf8'));
+  for (const p of pasos) {
+    await new Promise(r => setTimeout(r, p.espera || 0));
+    if (p.js) await win.webContents.executeJavaScript(p.js);
+    if (p.texto) fs.writeFileSync(path.join(app.getPath('userData'), 'proxima.txt'), await win.webContents.executeJavaScript(`document.getElementById(${JSON.stringify(p.texto)}).textContent`));
+    if (p.salir) { saliendo = true; app.quit(); }
+  }
 }
 
 // Solo para pruebas del desarrollador: guarda capturas de las tres pestañas
