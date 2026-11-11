@@ -174,23 +174,27 @@ const JS_LEER_TABLA = `(() => {
   const filas = [...document.querySelectorAll('tr')].filter(r => r.children.length >= 2 && /^\\d{2}\\/\\d{2}\\/\\d{4}$/.test((r.children[0].innerText||'').trim()))
     .map(r => [...r.children].map(c => (c.innerText||'').replace(/\\s+/g,' ').trim()));
   const cabecera = [...document.querySelectorAll('tr')].some(r => /fecha/i.test(r.innerText||'') && /ausencia/i.test(r.innerText||''));
+  const vacio = /no (hay|existen|se (han )?encontrad[oa]s?|tiene)\\b[^.\\n]{0,40}(registros?|datos|faltas|resultados)|sin (registros|datos|faltas|resultados)|ning[uú]n (registro|resultado|dato)|registros:\\s*0\\b/i.test(txt);
   return JSON.stringify({ conv: s.value, estado: est ? est.value : null, desde: m ? +m[1] : null, hasta: m ? +m[2] : null, total: m ? +m[3] : null, registros: reg ? +reg[1] : null,
-    cabecera, filas, listo: document.readyState, marca: window.__marcaFaltas || null });
+    cabecera, vacio, filas, listo: document.readyState, marca: window.__marcaFaltas || null });
 })()`;
 
 async function leerTabla(win) {
   const r = await enFrames(win, JS_LEER_TABLA);
   return r ? { frame: r.frame, datos: JSON.parse(r.valor) } : null;
 }
+// La página de faltas está lista si se ve la tabla, el contador o el aviso de que no hay faltas
+const tablaLista = d => d.listo === 'complete' && (d.cabecera || d.total != null || d.registros != null || d.vacio);
+
 // Solo el contenido de la tabla (no los desplegables, que cambian antes de que llegue la tabla nueva)
-const firmaDe = d => JSON.stringify([d.total, d.desde, d.filas]);
+const firmaDe = d => JSON.stringify([d.total, d.desde, d.registros, d.vacio, d.filas]);
 
 // Espera a que la tabla esté del todo dibujada (dos lecturas iguales seguidas)
 async function tablaEstable(win) {
   let previa = '';
   return hasta(async () => {
     const t = await leerTabla(win);
-    if (!t || t.datos.listo !== 'complete' || !t.datos.cabecera) return null;
+    if (!t || !tablaLista(t.datos)) return null;
     const f = firmaDe(t.datos);
     if (f === previa) return t;
     previa = f; return null;
@@ -216,7 +220,7 @@ async function ponerFiltro(win, estado) {
   let previa = '';
   return hasta(async () => {
     const t = await leerTabla(win);
-    if (!t || t.datos.conv !== '-2' || t.datos.estado !== estado || t.datos.listo !== 'complete' || !t.datos.cabecera) return null;
+    if (!t || t.datos.conv !== '-2' || t.datos.estado !== estado || !tablaLista(t.datos)) return null;
     // Si ha cambiado algo, la tabla tiene que ser nueva: otra página cargada (sin marca) o contenido distinto.
     if (r.valor === 'cambiado' && t.datos.marca === marca && firmaDe(t.datos) === firmaAntes && Date.now() - inicio < 20000) return null;
     const firma = firmaDe(t.datos);
@@ -235,7 +239,7 @@ async function irAPagina(win, n, tam) {
   }, { timeout: 30000, cada: 800, error: 'No carga la página ' + n + ' de la lista de faltas.' });
 }
 
-async function leerTodas(win, estado) {
+async function leerTodas(win, estado, log = () => {}) {
   const nombre = estado === 'I' ? 'injustificadas' : 'justificadas';
   let t = await ponerFiltro(win, estado);
   const d = t.datos;
@@ -245,6 +249,7 @@ async function leerTodas(win, estado) {
       throw new ErrorEducamos('recuento', `Educamos dice ${d.registros} faltas ${nombre} pero he leído ${d.filas.length}. No guardo nada para no meter datos mal.`);
     }
     if (d.registros == null && d.filas.length > 0) throw new ErrorEducamos('estructura', `No encuentro el total de faltas ${nombre} en la página.`);
+    if (d.filas.length === 0) log(`No hay faltas ${nombre}` + (d.vacio ? ' (Educamos lo dice)' : ''));
     return d.filas;
   }
   if (d.total === 0) return [];
@@ -351,9 +356,9 @@ async function leerFaltas({ mostrar = false, cred = null, centro = 'Brianda de M
     await hasta(() => leerTabla(seg), { timeout: 30000, error: 'La página de faltas no se ha abierto.' });
 
     log('Leyendo faltas injustificadas…');
-    const injust = await leerTodas(seg, 'I');
+    const injust = await leerTodas(seg, 'I', log);
     log('Leyendo faltas justificadas…');
-    const just = await leerTodas(seg, 'J');
+    const just = await leerTodas(seg, 'J', log);
     return { injust, just };
   } catch (e) {
     // Para el registro: en qué páginas estaba (solo la ruta, sin datos personales)
