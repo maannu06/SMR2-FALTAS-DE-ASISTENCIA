@@ -1,0 +1,44 @@
+{
+  "name": "control-faltas-smr",
+  "productName": "Control de faltas SMR",
+  "version": "1.0.0",
+  "description": "Control de faltas de 2º SMR conectado a EducamosCLM",
+  "main": "src/main.js",
+  "author": "Alumnado de 2.º SMR · IES Brianda de Mendoza",
+  "license": "MIT",
+  "scripts": {
+    "start": "electron .",
+    "dist": "electron-builder --win dir --x64 && node icono.mjs \"dist/win-unpacked/Control de faltas SMR.exe\" build/icon.ico && electron-builder --win portable --x64 --prepackaged dist/win-unpacked"
+  },
+  "build": {
+    "appId": "es.smr2.controlfaltas",
+    "productName": "Control de faltas SMR",
+    "files": [
+      "src/**/*",
+      "package.json"
+    ],
+    "directories": {
+      "output": "dist"
+    },
+    "win": {
+      "target": [
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "build/icon.ico",
+      "signAndEditExecutable": false
+    },
+    "portable": {
+      "artifactName": "ControlFaltasSMR-portable.exe"
+    }
+  },
+  "devDependencies": {
+    "electron": "^39.0.0",
+    "electron-builder": "^26.0.0",
+    "resedit": "^2.0.3"
+  }
+}

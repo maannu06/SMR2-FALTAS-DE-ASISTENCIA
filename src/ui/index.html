@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Control de faltas SMR</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header>
+  <div class="cabecera">
+    <div>
+      <h1>Control de faltas</h1>
+      <p class="sub">2.º SMR · IES Brianda de Mendoza</p>
+    </div>
+    <div class="sync" id="sync" aria-live="polite">
+      <span class="punto"></span><span id="sync-texto">Cargando…</span>
+      <button type="button" class="boton peq" id="b-leer">Leer Educamos ahora</button>
+    </div>
+  </div>
+  <nav class="tabs" aria-label="Apartados">
+    <button type="button" data-vista="faltas" aria-current="page">Faltas</button>
+    <button type="button" data-vista="beca">Beca MEC</button>
+    <button type="button" data-vista="ajustes">Ajustes</button>
+  </nav>
+</header>
+
+<main>
+  <div class="aviso-caja oculto" id="aviso-login">
+    <strong>Falta conectar con Educamos.</strong> Pulsa el botón, entra con tu usuario o con Cl@ve en la ventana que se abre y se cerrará sola. La app nunca ve tu contraseña: solo guarda la sesión en este ordenador, igual que un navegador.
+    <div><button type="button" class="boton lleno" id="b-login-aviso">Iniciar sesión en Educamos</button></div>
+  </div>
+  <div class="aviso-caja error oculto" id="aviso-error"></div>
+
+  <!-- ================= FALTAS ================= -->
+  <section class="vista" id="v-faltas">
+    <div class="total bien" id="total">
+      <div class="cifra" id="total-cifra">–</div>
+      <p id="total-texto"></p>
+      <p class="peor" id="total-peor"></p>
+    </div>
+
+    <h2>Por asignatura <small>(límite: 25 % de las horas de cada una)</small></h2>
+    <div id="lista"></div>
+
+    <h2>Cambios que ha detectado la app</h2>
+    <p class="intro">Faltas nuevas, faltas que te han justificado y faltas que han quitado de Educamos.</p>
+    <div id="cambios"></div>
+
+    <h2>¿Y si falto?</h2>
+    <p class="intro">Elige un día y te digo cuántas faltas sumarías en cada asignatura si faltas ese día entero.</p>
+    <div class="dias" id="dias"></div>
+    <div class="simulacion" id="simulacion" aria-live="polite"></div>
+
+    <h2>Historial</h2>
+    <details class="mano-caja">
+      <summary>Apuntar una falta a mano (que aún no sale en Educamos)</summary>
+      <p class="intro">Cuando la app lea Educamos y ese día ya esté leído, la falta a mano deja de contar sola, para que no se cuente dos veces.</p>
+      <form class="apuntar" id="form-apuntar">
+        <div><label for="ap-fecha">Día</label><input type="date" id="ap-fecha" required></div>
+        <div><label for="ap-mod">Asignatura</label><select id="ap-mod"></select></div>
+        <div><label for="ap-horas">Horas</label><input type="number" id="ap-horas" min="1" max="6" value="1" required></div>
+        <div><button type="submit" class="boton lleno">Apuntar</button></div>
+      </form>
+      <div class="mensaje" id="ap-msg" aria-live="polite"></div>
+    </details>
+    <p class="leyenda"><span class="chip">Injustificada</span> <span class="chip just">Justificada (no cuenta)</span> <span class="chip mano">A mano</span> <span class="chip ret">Retraso</span></p>
+    <div id="hist"></div>
+  </section>
+
+  <!-- ================= BECA ================= -->
+  <section class="vista" id="v-beca" hidden>
+    <div class="total bien" id="beca-total">
+      <div class="cifra" id="beca-cifra">–</div>
+      <p id="beca-texto"></p>
+    </div>
+    <div class="beca-barra"><div class="barra grande" aria-hidden="true"><span id="beca-barra"></span></div></div>
+    <div class="resumen-beca" id="beca-resumen"></div>
+
+    <label class="check"><input type="checkbox" id="beca-just"> Contar también las faltas justificadas <small>(recomendado: la norma de la beca no dice que no cuenten)</small></label>
+
+    <h2>Desglose</h2>
+    <div class="tabla-wrap"><table>
+      <thead><tr><th>Asignatura</th><th>Injustificadas</th><th>Justificadas</th><th>A mano</th><th>Cuentan para la beca</th></tr></thead>
+      <tbody id="beca-tabla"></tbody>
+    </table></div>
+
+    <h2>La norma de la beca</h2>
+    <div class="nota">
+      <p>La convocatoria de becas generales del Ministerio para 2026-2027 (artículo 43.2, estudios no universitarios) obliga a <strong>devolver toda la beca</strong> si pasa alguna de estas cosas:</p>
+      <ul>
+        <li><strong>No asistir al 80 % o más de las horas lectivas</strong>, salvo dispensa de escolarización. Por eso aquí el límite es el <strong>20 % de faltas</strong> sobre las horas del curso.</li>
+        <li>No aprobar al menos el <strong>50 %</strong> de las asignaturas u horas matriculadas (en ordinaria o extraordinaria).</li>
+        <li>Darte de baja del centro antes de que acabe el curso.</li>
+      </ul>
+      <p>La norma no dice que las faltas justificadas no cuenten. Por eso, para ir a lo seguro, la app las suma. Si en secretaría te dicen que solo cuentan las injustificadas, quita la marca de arriba.</p>
+      <p>Esto es distinto de la <strong>evaluación continua</strong> (pestaña Faltas): ahí el límite es el 25 % de cada asignatura y las justificadas no cuentan (Orden 201/2024 de Castilla-La Mancha).</p>
+    </div>
+  </section>
+
+  <!-- ================= AJUSTES ================= -->
+  <section class="vista" id="v-ajustes" hidden>
+    <h2 class="primero">Conexión con Educamos</h2>
+    <p id="aj-sesion" class="intro"></p>
+    <div class="botones">
+      <button type="button" class="boton lleno" id="b-login">Iniciar sesión en Educamos</button>
+      <button type="button" class="boton" id="b-leer2">Leer Educamos ahora</button>
+      <button type="button" class="boton" id="b-logout">Cerrar sesión de Educamos</button>
+    </div>
+
+    <h3>Entrar sola cuando caduque la sesión (opcional)</h3>
+    <p class="intro">Educamos cierra la sesión si pasa un rato sin usarse y siempre al apagar el ordenador. La app la mantiene abierta mientras está encendida, pero si quieres que no tengas que volver a entrar nunca, guarda aquí tu usuario y contraseña de Educamos. Se guardan <strong>cifrados con tu cuenta de Windows</strong> en este ordenador y solo se usan para entrar en Educamos. Con Cl@ve no se puede.</p>
+    <p class="intro" id="cred-estado"></p>
+    <form class="campos" id="form-cred" autocomplete="off">
+      <div><label for="cred-usuario">Usuario de Educamos</label><input type="text" id="cred-usuario" autocomplete="off" spellcheck="false"></div>
+      <div><label for="cred-pass">Contraseña</label><input type="password" id="cred-pass" autocomplete="new-password"></div>
+      <div class="botones"><button type="submit" class="boton lleno">Guardar</button><button type="button" class="boton" id="b-cred-borrar">Borrar</button></div>
+    </form>
+
+    <h2>Lectura automática</h2>
+    <div class="campos">
+      <div><label for="aj-intervalo">Leer Educamos cada</label>
+        <select id="aj-intervalo">
+          <option value="30">30 minutos</option><option value="60">1 hora</option><option value="120">2 horas</option>
+          <option value="240">4 horas</option><option value="720">12 horas</option>
+        </select></div>
+    </div>
+    <label class="check"><input type="checkbox" id="aj-alabrir"> Leer Educamos al abrir la app</label>
+    <label class="check"><input type="checkbox" id="aj-notif"> Avisarme con una notificación de Windows cuando haya cambios</label>
+    <label class="check"><input type="checkbox" id="aj-ventanas"> Enseñar las ventanas de Educamos mientras lee (solo para ver qué pasa si algo falla)</label>
+
+    <h2>Windows</h2>
+    <label class="check"><input type="checkbox" id="aj-inicio"> Abrir la app al encender el ordenador (se queda junto al reloj)</label>
+    <label class="check"><input type="checkbox" id="aj-fondo"> Al cerrar la ventana, seguir funcionando junto al reloj</label>
+
+    <h2>Horas de cada asignatura</h2>
+    <p class="intro">Vienen de la tabla oficial de la Junta para SMR. Si un profesor te da otra cifra, cámbiala aquí.</p>
+    <div class="tabla-wrap"><table>
+      <thead><tr><th>Asignatura</th><th>h/semana</th><th>Horas totales</th><th>Máximo (25 %)</th></tr></thead>
+      <tbody id="tabla-horas"></tbody>
+    </table></div>
+    <button type="button" class="boton" id="b-restaurar">Volver a las horas oficiales</button>
+
+    <h2>Beca MEC</h2>
+    <div class="campos">
+      <div><label for="aj-beca-horas">Horas lectivas del curso</label><input type="number" id="aj-beca-horas" min="100" max="2000"></div>
+    </div>
+    <p class="intro" id="aj-beca-nota"></p>
+
+    <h2>Datos</h2>
+    <div class="botones">
+      <button type="button" class="boton" id="b-carpeta">Abrir la carpeta de datos</button>
+      <button type="button" class="boton" id="b-borrar-cambios">Borrar la lista de cambios</button>
+    </div>
+    <div class="mensaje" id="aj-msg" aria-live="polite"></div>
+  </section>
+</main>
+<script src="app.js"></script>
+</body>
+</html>
