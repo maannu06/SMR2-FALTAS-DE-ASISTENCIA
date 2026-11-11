@@ -30,6 +30,10 @@ Educamos cierra la sesión si pasa un rato sin usarse y siempre que apagas el or
 - Si fallan una vez, la app deja de usarlos para que Educamos no bloquee tu cuenta.
 - Con Cl@ve no funciona.
 
+## Si tienes más de un centro en Educamos
+
+Si también estás matriculado en otro centro (por ejemplo, la Escuela Oficial de Idiomas), la app comprueba antes de leer en qué centro está Educamos y, si no es el IES Brianda de Mendoza, lo cambia sola. Si no puede, **no guarda nada** y te avisa; entonces, en **Ajustes**, pulsa «Abrir Educamos para cambiar el centro», elige tu centro y vuelve a leer. Si las faltas leídas no son de asignaturas de 2.º SMR, tampoco las guarda. El centro se puede cambiar en **Ajustes → Centro**.
+
 ## Tus datos
 
 Todo se queda **en tu ordenador**, en `%APPDATA%\Control de faltas SMR\`. La app no envía tus datos a ningún sitio: solo se conecta a Educamos (`educamosclm.castillalamancha.es`, `cerbero.jccm.es` y `papassegedu.jccm.es`).
@@ -79,7 +83,8 @@ Archivos:
 ## Si algo falla
 
 - En **Ajustes**, marca «Enseñar las ventanas de Educamos mientras lee» y pulsa «Leer Educamos ahora» para ver en qué paso se queda.
-- Si Educamos cambia su web, el lector puede dejar de funcionar. Abre una *issue* con una captura.
+- En **Ajustes**, «Abrir el registro» enseña cada paso de la lectura y dónde se para. No guarda faltas ni contraseñas: puedes adjuntarlo en una *issue*.
+- Si Educamos cambia su web, el lector puede dejar de funcionar. Abre una *issue* con una captura y el registro.
 
 ## Licencia
 

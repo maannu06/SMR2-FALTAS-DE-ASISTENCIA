@@ -63,7 +63,7 @@ async function hasta(fn, { timeout = 30000, cada = 700, error = 'Educamos tarda 
 }
 
 // ¿Está dentro de Educamos (sesión iniciada)?
-const JS_DENTRO = `(() => !![...document.querySelectorAll('button,[role=button],a')].find(e => /panel de aplicaciones/i.test((e.getAttribute('aria-label')||'') + ' ' + (e.title||''))))()`;
+const JS_DENTRO = `(() => !![...document.querySelectorAll('button,[role=button],a')].find(e => /panel de aplicaciones|cuenta de educamos/i.test((e.getAttribute('aria-label')||'') + ' ' + (e.title||''))))()`;
 // ¿Está en la pantalla de entrada, ya cargada? (no en un salto intermedio de la redirección)
 const JS_FORM_LOGIN = `(() => document.readyState === 'complete' && !!document.querySelector('#kc-form-login, #username'))()`;
 
@@ -142,11 +142,19 @@ function abrirLogin() {
         try { if (await ejecutar(w.webContents, JS_DENTRO)) { await espera(1500); fin(true); } } catch (e) {}
       }
     }, 1500);
-    const fin = ok => { if (terminado) return; terminado = true; clearInterval(t); if (!w.isDestroyed()) w.close(); resolve(ok); };
+    const fin = ok => { if (terminado) return; terminado = true; clearInterval(t); if (!w.isDestroyed()) w.destroy(); resolve(ok); };
     w.on('closed', () => fin(false));
     w.webContents.setWindowOpenHandler(() => ({ action: 'allow', overrideBrowserWindowOptions: { webPreferences: { partition: PARTICION } } }));
     w.loadURL(URL_INICIO).catch(() => {});
   });
+}
+
+// Abre Educamos con la sesión de la app, sin cerrarse sola (para elegir el centro a mano, por ejemplo)
+function abrirEducamosVisible() {
+  const w = nuevaVentana(true);
+  w.setTitle('EducamosCLM (sesión de la app de faltas)');
+  w.webContents.setWindowOpenHandler(() => ({ action: 'allow', overrideBrowserWindowOptions: { webPreferences: { partition: PARTICION } } }));
+  w.loadURL(URL_INICIO).catch(() => {});
 }
 
 async function cerrarSesion() {
@@ -177,10 +185,22 @@ async function leerTabla(win) {
 // Solo el contenido de la tabla (no los desplegables, que cambian antes de que llegue la tabla nueva)
 const firmaDe = d => JSON.stringify([d.total, d.desde, d.filas]);
 
+// Espera a que la tabla esté del todo dibujada (dos lecturas iguales seguidas)
+async function tablaEstable(win) {
+  let previa = '';
+  return hasta(async () => {
+    const t = await leerTabla(win);
+    if (!t || t.datos.listo !== 'complete' || !t.datos.cabecera) return null;
+    const f = firmaDe(t.datos);
+    if (f === previa) return t;
+    previa = f; return null;
+  }, { timeout: 30000, cada: 1200, error: 'La página de faltas no termina de cargar.' });
+}
+
 // Pone "Todas las convocatorias" y el tipo de falta, y espera a que la tabla se recargue de verdad
 async function ponerFiltro(win, estado) {
   const marca = 'm' + Date.now() + Math.random().toString(36).slice(2);
-  const antes = await leerTabla(win);
+  const antes = await tablaEstable(win);
   const r = await enFrames(win, `(() => {
     const s = document.querySelector('select[name=X_CONVCENTRO]'), e = document.querySelector('select[name=ESTADO]');
     if (!s || !e) return false;
@@ -239,15 +259,60 @@ async function leerTodas(win, estado) {
   return filas;
 }
 
+// ---------- Centro ----------
+const normTxt = s => (s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/\s+/g, ' ').trim();
+// En la cabecera de Seguimiento Educativo pone: «Nombre / Alumnado / IES - Brianda de Mendoza»
+const JS_CENTRO = `(() => { const t = (document.body && document.body.innerText) || ''; const m = t.match(/Alumnad[oa]\\s*\\n\\s*([^\\n]{3,90})/); return m ? m[1].trim() : null; })()`;
+const JS_CAMBIAR_CENTRO = c => `(() => {
+  const n = s => (s||'').normalize('NFD').replace(/[\\u0300-\\u036f]/g,'').toLowerCase();
+  const c = ${JSON.stringify(c)};
+  for (const s of document.querySelectorAll('select')) {
+    const o = [...s.options].find(o => n(o.text).includes(c));
+    if (o && s.value !== o.value) { s.value = o.value; s.dispatchEvent(new Event('change', { bubbles: true })); return 'select'; }
+  }
+  const cands = [...document.querySelectorAll('a,li,button,[onclick],[role=option],[role=menuitem]')]
+    .filter(e => n(e.innerText).includes(c) && (e.innerText||'').length < 120 && !/alumnad[oa]/i.test(e.innerText||''));
+  if (cands.length) { cands[cands.length - 1].click(); return 'clic'; }
+  const chev = [...document.querySelectorAll('button,a,[onclick],img,[role=button]')]
+    .find(e => !(e.innerText||'').trim() && /alumno\\/a/i.test(((e.closest('div,td,table')||{}).innerText)||''));
+  if (chev) { chev.click(); return 'desplegar'; }
+  return false;
+})()`;
+
+async function centroActual(seg) {
+  const r = await hasta(() => enFrames(seg, JS_CENTRO), { timeout: 20000, error: 'No encuentro el centro en Seguimiento Educativo.' });
+  return r.valor;
+}
+
+// Se asegura de que Seguimiento Educativo está en el centro pedido; si no lo consigue, no se lee nada.
+async function asegurarCentro(seg, centro, log) {
+  const c = normTxt(centro);
+  if (!c) return;
+  let actual = await centroActual(seg);
+  log('Centro en Educamos: ' + actual);
+  for (let intento = 0; intento < 4 && !normTxt(actual).includes(c); intento++) {
+    log('No es «' + centro + '»: cambiando de centro…');
+    const r = await enFrames(seg, JS_CAMBIAR_CENTRO(c));
+    log('Cambio de centro: ' + (r ? r.valor : 'sin opción'));
+    if (!r) break;
+    await espera(r.valor === 'desplegar' ? 1500 : 5000);
+    actual = await centroActual(seg).catch(() => actual);
+    log('Centro en Educamos: ' + actual);
+  }
+  if (!normTxt(actual).includes(c)) {
+    throw new ErrorEducamos('centro', `Educamos está abierto en «${actual}» y no he podido cambiarlo a «${centro}». En Ajustes pulsa «Abrir Educamos para cambiar el centro», elige tu centro y vuelve a leer.`);
+  }
+}
+
 // ---------- Lectura completa ----------
-async function leerFaltas({ mostrar = false, cred = null, log = () => {} } = {}) {
+async function leerFaltas({ mostrar = false, cred = null, centro = 'Brianda de Mendoza', log = () => {} } = {}) {
   const win = nuevaVentana(mostrar);
   const hijas = [];
   win.webContents.setWindowOpenHandler(() => ({
     action: 'allow',
     overrideBrowserWindowOptions: { show: !!mostrar, webPreferences: { partition: PARTICION, backgroundThrottling: false } },
   }));
-  win.webContents.on('did-create-window', w => hijas.push(w));
+  win.webContents.on('did-create-window', w => { hijas.push(w); if (!mostrar) w.hide(); });
   const cerrarTodo = () => { [win, ...hijas].forEach(w => { try { if (!w.isDestroyed()) w.destroy(); } catch (e) {} }); };
 
   try {
@@ -266,6 +331,8 @@ async function leerFaltas({ mostrar = false, cred = null, log = () => {} } = {})
       if (/papassegedu|segedu/i.test(win.webContents.getURL())) return win;
       return null;
     }, { timeout: 30000, error: 'Seguimiento Educativo no se ha abierto.' });
+
+    await asegurarCentro(seg, centro, log);
 
     log('Abriendo Faltas de asistencia…');
     const JS_CLIC_FALTAS = `(() => {
@@ -288,9 +355,16 @@ async function leerFaltas({ mostrar = false, cred = null, log = () => {} } = {})
     log('Leyendo faltas justificadas…');
     const just = await leerTodas(seg, 'J');
     return { injust, just };
+  } catch (e) {
+    // Para el registro: en qué páginas estaba (solo la ruta, sin datos personales)
+    try {
+      const rutas = [win, ...hijas].filter(w => !w.isDestroyed()).map(w => { try { const u = new URL(w.webContents.getURL()); return u.host + u.pathname; } catch (x) { return '?'; } });
+      log('Fallo en: ' + rutas.join(' | ') + ' → ' + (e.codigo || '') + ' ' + e.message);
+    } catch (x) {}
+    throw e;
   } finally {
     cerrarTodo();
   }
 }
 
-module.exports = { leerFaltas, mantenerSesion, abrirLogin, cerrarSesion, ErrorEducamos };
+module.exports = { leerFaltas, mantenerSesion, abrirLogin, abrirEducamosVisible, cerrarSesion, ErrorEducamos };

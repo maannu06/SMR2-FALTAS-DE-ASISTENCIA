@@ -1,7 +1,7 @@
 {
   "name": "control-faltas-smr",
   "productName": "Control de faltas SMR",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Control de faltas de 2º SMR conectado a EducamosCLM",
   "main": "src/main.js",
   "author": "Alumnado de 2.º SMR · IES Brianda de Mendoza",

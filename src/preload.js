@@ -9,6 +9,8 @@ contextBridge.exposeInMainWorld('app', {
   cerrarSesion: () => ipcRenderer.invoke('login:cerrar'),
   guardarCredenciales: (u, c) => ipcRenderer.invoke('cred:guardar', u, c),
   borrarCredenciales: () => ipcRenderer.invoke('cred:borrar'),
+  abrirEducamos: () => ipcRenderer.invoke('educamos:abrir'),
+  abrirRegistro: () => ipcRenderer.invoke('registro:abrir'),
   abrirCarpeta: () => ipcRenderer.invoke('carpeta:abrir'),
   alCambiar: fn => ipcRenderer.on('datos', (_e, d) => fn(d)),
 });

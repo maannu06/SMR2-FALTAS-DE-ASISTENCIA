@@ -222,6 +222,8 @@
       : D.credUsuario ? `Guardado: entra sola como «${D.credUsuario}» cuando haga falta.` : 'No hay usuario guardado: si la sesión caduca, te avisaré para que entres tú.';
     $('aj-intervalo').value = String(a.intervaloMin);
     $('aj-alabrir').checked = !!a.leerSiempreAlAbrir;
+    if (document.activeElement !== $('aj-centro')) $('aj-centro').value = a.centro || '';
+    $('aj-version').textContent = 'Versión ' + (D.version || '');
     const iv = Number(a.intervaloMin) || 60, ivTxt = iv % 60 ? iv + ' minutos' : plural(iv / 60, 'hora');
     let prox;
     if (D.estado.sincronizando) prox = 'Leyendo Educamos ahora.';
@@ -266,6 +268,9 @@
   });
   $('b-cred-borrar').addEventListener('click', async () => { await window.app.borrarCredenciales(); $('cred-usuario').value = ''; $('cred-pass').value = ''; $('aj-msg').textContent = 'Usuario y contraseña borrados de este ordenador.'; });
   $('b-carpeta').addEventListener('click', () => window.app.abrirCarpeta());
+  $('b-abrir-educamos').addEventListener('click', () => { window.app.abrirEducamos(); $('aj-msg').textContent = 'Se ha abierto Educamos. Elige tu centro, cierra la ventana y pulsa «Leer Educamos ahora».'; });
+  $('b-registro').addEventListener('click', () => window.app.abrirRegistro());
+  $('aj-centro').addEventListener('change', e => { window.app.ajustes({ centro: e.target.value.trim() || 'Brianda de Mendoza' }); $('aj-msg').textContent = 'Centro guardado.'; });
   $('b-borrar-cambios').addEventListener('click', async () => { await window.app.borrarCambios(); $('aj-msg').textContent = 'Lista de cambios borrada.'; });
 
   const ajuste = (id, clave, conv) => $(id).addEventListener('change', e => { const v = conv(e.target); window.app.ajustes({ [clave]: v }); $('aj-msg').textContent = 'Guardado.'; });

@@ -28,6 +28,7 @@ const AJUSTES_DEF = {
   iniciarConWindows: true,
   segundoPlano: true,
   mostrarVentanas: false,
+  centro: 'Brianda de Mendoza', // si el alumno tiene varios centros en Educamos, se lee solo este
 };
 let datos = { sync: null, ajustes: { ...AJUSTES_DEF }, manuales: [], cambios: [], credenciales: null, ultimoIntento: null };
 
@@ -52,8 +53,19 @@ function guardar() {
 function publico() {
   const { credenciales, ...resto } = datos;
   const prox = cuandoToca();
-  return { ...resto, proximaLectura: isFinite(prox) ? new Date(Math.max(prox, Date.now())).toISOString() : null, credUsuario: credenciales ? credenciales.usuario : null, credFallo: !!(credenciales && credenciales.fallo), cifradoDisponible: safeStorage.isEncryptionAvailable(), estado, modulos: MODULOS };
+  return { ...resto, version: app.getVersion(), proximaLectura: isFinite(prox) ? new Date(Math.max(prox, Date.now())).toISOString() : null, credUsuario: credenciales ? credenciales.usuario : null, credFallo: !!(credenciales && credenciales.fallo), cifradoDisponible: safeStorage.isEncryptionAvailable(), estado, modulos: MODULOS };
 }
+// ---------- Registro (para saber dónde falla; sin faltas ni contraseñas) ----------
+const RUTA_REG = () => path.join(app.getPath('userData'), 'registro.txt');
+function registrar(msg) {
+  try {
+    const f = RUTA_REG();
+    if (fs.existsSync(f) && fs.statSync(f).size > 512 * 1024) fs.renameSync(f, f + '.anterior');
+    const t = new Date().toLocaleString('es-ES');
+    fs.appendFileSync(f, `[${t}] ${msg}\n`);
+  } catch (e) {}
+}
+
 function enviar() {
   if (win && !win.isDestroyed()) win.webContents.send('datos', publico());
   actualizarTray();
@@ -111,16 +123,32 @@ function errorDeSesion(e) {
 
 // ---------- Lectura de Educamos ----------
 async function leer() {
-  return educamos.leerFaltas({ mostrar: datos.ajustes.mostrarVentanas, cred: credParaUsar(), log: p => { estado.paso = p; enviar(); } });
+  return educamos.leerFaltas({
+    mostrar: datos.ajustes.mostrarVentanas, cred: credParaUsar(), centro: datos.ajustes.centro,
+    log: p => { registrar(p); if (!/^(Centro en|Cambio de|Fallo en)/.test(p)) { estado.paso = p; enviar(); } },
+  });
+}
+
+// Si casi todas las faltas leídas son de asignaturas que no son de SMR, seguramente se ha leído otro centro
+function comprobarAsignaturas(n) {
+  const codigos = MODULOS.map(m => m.codigo);
+  const filas = n.injust.concat(n.just).filter(x => !x.completo);
+  const raras = filas.filter(x => !codigos.includes(x.m));
+  if (filas.length >= 3 && raras.length > filas.length / 2) {
+    const nombres = [...new Set(raras.map(x => x.m).filter(Boolean))].slice(0, 3).join(', ');
+    throw Object.assign(new Error(`Las faltas leídas son de asignaturas que no son de 2.º SMR (${nombres}…). Seguramente Educamos estaba en otro centro. No guardo nada; revisa el centro en Ajustes.`), { codigo: 'centro' });
+  }
 }
 
 async function sincronizar(origen) {
   if (estado.sincronizando) return;
   estado = { ...estado, sincronizando: true, paso: 'Empezando…', error: null };
+  registrar(`--- Lectura (${origen}) · versión ${app.getVersion()}`);
   enviar();
   try {
     let r = await leer();
     let nuevo = { actualizado: new Date().toISOString(), injust: normalizar(r.injust), just: normalizar(r.just) };
+    comprobarAsignaturas(nuevo);
     // Si de golpe desaparecen muchas faltas, se lee otra vez para confirmar antes de guardar
     const prevTotal = datos.sync ? datos.sync.injust.length + datos.sync.just.length : 0;
     const nuevoTotal = nuevo.injust.length + nuevo.just.length;
@@ -136,6 +164,7 @@ async function sincronizar(origen) {
     const anteriorLimite = datos.sync ? avisosLimite(datos.sync) : [];
     datos.sync = nuevo;
     if (cambios.length) datos.cambios = cambios.concat(datos.cambios || []).slice(0, 300);
+    registrar(`Lectura correcta: ${nuevo.injust.length} horas injustificadas, ${nuevo.just.length} justificadas, ${cambios.length} cambios`);
     datos.ultimoIntento = { t: nuevo.actualizado, ok: true };
     guardar();
     estado = { sincronizando: false, paso: '', error: null, sesion: 'ok' };
@@ -144,6 +173,7 @@ async function sincronizar(origen) {
     if (lim.length && cambios.some(c => c.tipo === 'nueva')) avisar('Cuidado con el límite', 'Pasas del 75 % en: ' + lim.join(', '));
   } catch (e) {
     estado = { ...estado, sincronizando: false, paso: '', error: e.message || String(e) };
+    registrar(`ERROR ${e.codigo || ''}: ${e.message || e}`);
     errorDeSesion(e);
     // Si hay que entrar a mano (sin contraseña guardada o con una que falló), no se reintenta solo
     const esperaUsuario = (e.codigo === 'login' || e.codigo === 'credenciales') && !credParaUsar();
@@ -257,6 +287,8 @@ ipcMain.handle('cred:guardar', async (_e, usuario, contrasena) => {
   return { ok: true };
 });
 ipcMain.handle('cred:borrar', () => { datos.credenciales = null; guardar(); enviar(); return true; });
+ipcMain.handle('educamos:abrir', () => { educamos.abrirEducamosVisible(); return true; });
+ipcMain.handle('registro:abrir', () => { if (!fs.existsSync(RUTA_REG())) registrar('Registro creado'); return shell.openPath(RUTA_REG()); });
 ipcMain.handle('carpeta:abrir', () => shell.openPath(app.getPath('userData')));
 
 // ---------- Arranque ----------

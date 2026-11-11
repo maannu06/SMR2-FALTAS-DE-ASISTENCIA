@@ -109,6 +109,13 @@
       <button type="button" class="boton" id="b-logout">Cerrar sesión de Educamos</button>
     </div>
 
+    <h3>Centro</h3>
+    <p class="intro">Si en Educamos tienes más de un centro (por ejemplo, también la Escuela Oficial de Idiomas), la app se pone sola en este antes de leer. Si no lo consigue, no guarda nada y te avisa.</p>
+    <div class="campos">
+      <div><label for="aj-centro">Nombre del centro (o una parte)</label><input type="text" id="aj-centro" spellcheck="false"></div>
+      <div><button type="button" class="boton" id="b-abrir-educamos">Abrir Educamos para cambiar el centro</button></div>
+    </div>
+
     <h3>Entrar sola cuando caduque la sesión (opcional)</h3>
     <p class="intro">Educamos cierra la sesión si pasa un rato sin usarse y siempre al apagar el ordenador. La app la mantiene abierta mientras está encendida, pero si quieres que no tengas que volver a entrar nunca, guarda aquí tu usuario y contraseña de Educamos. Se guardan <strong>cifrados con tu cuenta de Windows</strong> en este ordenador y solo se usan para entrar en Educamos. Con Cl@ve no se puede.</p>
     <p class="intro" id="cred-estado"></p>
@@ -153,8 +160,10 @@
     <div class="botones">
       <button type="button" class="boton" id="b-carpeta">Abrir la carpeta de datos</button>
       <button type="button" class="boton" id="b-borrar-cambios">Borrar la lista de cambios</button>
+      <button type="button" class="boton" id="b-registro">Abrir el registro (para ver dónde falla)</button>
     </div>
     <div class="mensaje" id="aj-msg" aria-live="polite"></div>
+    <p class="intro" id="aj-version"></p>
   </section>
 </main>
 <script src="app.js"></script>
