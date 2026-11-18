@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Faltas SMR</string>
+    <string name="canal_avisos">Cambios en tus faltas</string>
+    <string name="canal_avisos_desc">Faltas nuevas, justificadas o quitadas, y avisos de sesión de Educamos</string>
+</resources>

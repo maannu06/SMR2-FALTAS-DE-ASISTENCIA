@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="Tema" parent="android:Theme.Material.NoActionBar">
+        <item name="android:windowBackground">@color/fondo</item>
+        <item name="android:colorAccent">@color/acento</item>
+    </style>
+    <color name="fondo">#141A2A</color>
+    <color name="acento">#8EA8FF</color>
+    <color name="icono_fondo">#1E3A8A</color>
+</resources>
