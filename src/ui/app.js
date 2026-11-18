@@ -2,30 +2,20 @@
   'use strict';
   const $ = id => document.getElementById(id);
   const esc = s => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-  const CORTO = { IALP: 'Programación', IPEII: 'IPE II', PIMSM: 'Proyecto' };
-  const corto = c => CORTO[c] || c;
-  const PCT_EVAL = 25, PCT_BECA = 20, HORAS_DIA = 6;
-  // Horas de cada asignatura por día (horario de Educamos, curso 26/27)
-  const HORARIO = {
-    1: { nombre: 'Lunes',     h: { APOF: 1, IPEII: 1, SRED: 2, SR: 2 } },
-    2: { nombre: 'Martes',    h: { IALP: 2, SEIN: 2, APOF: 2 } },
-    3: { nombre: 'Miércoles', h: { SR: 1, IALP: 2, IPEII: 1, SRED: 2 } },
-    4: { nombre: 'Jueves',    h: { PIMSM: 1, SEIN: 2, APOF: 2, IPEII: 1 } },
-    5: { nombre: 'Viernes',   h: { SR: 2, SRED: 2, APOF: 2 } },
-  };
+  const PCT_EVAL = 25, PCT_BECA = 20;
 
   let D = null; // datos completos desde la app
-  let diaSel = null;
 
   // ---------- cálculos ----------
-  const modulos = () => D.modulos;
-  const oficial = c => modulos().find(m => m.codigo === c).horas;
-  const horasDe = c => Number(D.ajustes.horas && D.ajustes.horas[c]) || oficial(c);
-  const limiteDe = (c, pct = PCT_EVAL) => Math.floor(horasDe(c) * pct / 100);
-  const horasCurso = () => modulos().reduce((s, m) => s + horasDe(m.codigo), 0);
-  const becaHoras = () => Number(D.ajustes.becaHoras) || horasCurso();
-  // Una falta apuntada a mano deja de contar cuando Educamos ya tiene esa falta (mismo día y asignatura),
-  // sea justificada o no. Así no se cuenta dos veces.
+  // Las asignaturas, sus horas y el horario los saca la app de Educamos y de la web oficial (no se tocan a mano)
+  const modulos = () => D.modulos || [];
+  const modulo = c => modulos().find(m => m.codigo === c);
+  const corto = c => { const m = modulo(c); return m && m.corto ? m.corto : c; };
+  const limiteDe = c => Math.floor(((modulo(c) || {}).horas || 0) * PCT_EVAL / 100);
+  const horasCurso = () => modulos().reduce((s, m) => s + (m.horas || 0), 0);
+  const horasDia = () => { const h = D.horario || {}; const dias = Object.values(h).map(d => Object.values(d).reduce((a, b) => a + b, 0)).filter(Boolean); return dias.length ? Math.round(dias.reduce((a, b) => a + b, 0) / dias.length) : 6; };
+
+  // Una falta apuntada a mano deja de contar cuando Educamos ya tiene esa falta (mismo día y asignatura)
   function manualesVigentes() {
     const edu = {};
     const s = D.sync || { injust: [], just: [] };
@@ -39,14 +29,15 @@
     return out;
   }
 
-  function conteo() {
+  function conteo(filtroFecha) {
+    const ok = f => !filtroFecha || filtroFecha(f);
     const c = {};
     modulos().forEach(m => c[m.codigo] = { inj: 0, just: 0, mano: 0, ret: 0 });
     const s = D.sync || { injust: [], just: [] };
     const add = (m, k, n = 1) => { if (!c[m]) c[m] = { inj: 0, just: 0, mano: 0, ret: 0, desconocida: true }; c[m][k] += n; };
-    s.injust.forEach(x => add(x.m, x.retraso ? 'ret' : 'inj'));
-    s.just.forEach(x => { if (!x.retraso) add(x.m, 'just'); });
-    manualesVigentes().forEach(x => add(x.m, 'mano', Number(x.n) || 1));
+    s.injust.forEach(x => { if (ok(x.f)) add(x.m, x.retraso ? 'ret' : 'inj'); });
+    s.just.forEach(x => { if (!x.retraso && ok(x.f)) add(x.m, 'just'); });
+    manualesVigentes().forEach(x => { if (ok(x.f)) add(x.m, 'mano', Number(x.n) || 1); });
     return c;
   }
   function estadoDe(llevas, lim) {
@@ -60,6 +51,24 @@
   const fechaCorta = iso => { const [y, m, d] = iso.split('-').map(Number); return new Date(y, m - 1, d).toLocaleDateString('es-ES', { day: 'numeric', month: 'short' }); };
   const hoyISO = () => { const d = new Date(); return new Date(d - d.getTimezoneOffset() * 60000).toISOString().slice(0, 10); };
   const plural = (n, s, p) => n + ' ' + (n === 1 ? s : (p || s + 's'));
+
+  // ---------- trimestre ----------
+  // 1.º: septiembre–diciembre (hasta las vacaciones de Navidad) · 2.º: enero–Semana Santa · 3.º: después de Semana Santa
+  function domingoPascua(y) {
+    const a = y % 19, b = Math.floor(y / 100), c = y % 100, d = Math.floor(b / 4), e = b % 4, f = Math.floor((b + 8) / 25), g = Math.floor((b - f + 1) / 3);
+    const h = (19 * a + b - d - g + 15) % 30, i = Math.floor(c / 4), k = c % 4, l = (32 + 2 * e + 2 * i - h - k) % 7, m = Math.floor((a + 11 * h + 22 * l) / 451);
+    const mes = Math.floor((h + l - 7 * m + 114) / 31), dia = ((h + l - 7 * m + 114) % 31) + 1;
+    return new Date(y, mes - 1, dia);
+  }
+  function trimestreDe(fecha) {
+    const y = fecha.getFullYear(), mes = fecha.getMonth() + 1;
+    if (mes >= 9) return { n: 1, desde: new Date(y, 8, 1), hasta: new Date(y, 11, 31) };
+    const pascua = domingoPascua(y);
+    if (mes <= 8 && fecha <= pascua) return { n: 2, desde: new Date(y, 0, 1), hasta: pascua };
+    return { n: 3, desde: new Date(pascua.getTime() + 864e5), hasta: new Date(y, 7, 31) };
+  }
+  const NOMBRE_TRIM = { 1: '1.er trimestre', 2: '2.º trimestre', 3: '3.er trimestre' };
+  const HASTA_TRIM = { 1: 'hasta las vacaciones de Navidad', 2: 'hasta Semana Santa', 3: 'hasta final de curso' };
 
   // ---------- cabecera / avisos ----------
   function pintarSync() {
@@ -82,41 +91,52 @@
     $('aj-sesion').textContent = e.sesion === 'ok' ? 'Sesión de Educamos guardada en este ordenador. La app lee tus faltas sola.'
       : e.sesion === 'login' ? 'No hay sesión de Educamos (o ha caducado). Pulsa «Iniciar sesión en Educamos».'
       : 'La sesión de Educamos se comprobará en la próxima lectura. Si es la primera vez, pulsa «Iniciar sesión en Educamos».';
+    const cu = D.curso || {};
+    $('sub-curso').textContent = [cu.etiqueta, cu.centro || D.ajustes.centro].filter(Boolean).join(' · ');
+    document.title = 'Control de faltas' + (cu.etiqueta ? ' · ' + cu.etiqueta : '');
   }
 
   // ---------- FALTAS ----------
   function pintarFaltas() {
     const c = conteo();
-    const filas = modulos().map(m => {
-      const k = c[m.codigo], llevas = k.inj + k.mano, lim = limiteDe(m.codigo);
-      return { m, k, llevas, lim, st: estadoDe(llevas, lim) };
-    }).sort((a, b) => (b.llevas / b.lim) - (a.llevas / a.lim));
+    if (!modulos().length) {
+      $('lista').innerHTML = '<p class="vacio">Todavía no sé tus asignaturas. Al leer Educamos, la app mira tu curso y tu horario y busca las horas oficiales de cada asignatura.</p>';
+    } else {
+      const filas = modulos().map(m => {
+        const k = c[m.codigo], llevas = k.inj + k.mano, lim = limiteDe(m.codigo);
+        return { m, k, llevas, lim, st: estadoDe(llevas, lim) };
+      }).sort((a, b) => (b.llevas / (b.lim || 1)) - (a.llevas / (a.lim || 1)));
+      $('lista').innerHTML = filas.map(({ m, k, llevas, lim, st }) => {
+        const quedan = lim - llevas, sem = quedan > 0 && m.semana ? Math.floor(quedan / m.semana) : 0;
+        const extra = [k.mano ? plural(k.mano, 'a mano', 'a mano') : '', k.just ? plural(k.just, 'justificada') + ' (no cuentan)' : '', k.ret ? plural(k.ret, 'retraso') : ''].filter(Boolean).join(' · ');
+        return `<section class="asignatura ${st.e}">
+          <div><div class="nombre"><span class="codigo">${esc(m.codigo)}</span> · ${esc(m.nombre)}</div>
+          <div class="detalle">${m.horas} h totales${m.semana ? ' · ' + m.semana + ' h a la semana' : ''} · máximo <strong>${lim}</strong> faltas</div></div>
+          <div class="cifras"><div class="grande">${llevas} <small>/ ${lim}</small></div>${extra ? `<div class="peq">${extra}</div>` : ''}</div>
+          <div class="barra" aria-hidden="true"><span style="width:${Math.min(100, st.uso)}%"></span></div>
+          <div class="resumen"><span class="estado">${st.t}</span>
+            <span>${quedan >= 0 ? `Te quedan <strong>${quedan}</strong> faltas` : `Te has pasado en <strong>${-quedan}</strong> faltas`}</span>
+            ${quedan > 0 && m.semana ? `<span>≈ ${sem >= 1 ? plural(sem, 'semana') + ' sin ir a esta asignatura' : 'menos de una semana de esta asignatura'}</span>` : ''}
+            <span>${st.uso} % del límite</span></div></section>`;
+      }).join('');
+      const peor = filas[0];
+      const total = filas.reduce((s, x) => s + x.llevas, 0);
+      $('total').className = 'total ' + (peor ? peor.st.e : 'bien');
+      $('total-cifra').textContent = D.sync || manualesVigentes().length ? plural(total, 'falta') + ' injustificadas' : 'Sin datos todavía';
+      $('total-texto').textContent = D.sync ? `de ${horasCurso()} horas de clase del curso. Las justificadas no cuentan para la evaluación continua.` : 'Conecta Educamos para ver tus faltas.';
+      $('total-peor').textContent = peor && peor.llevas ? `La que más te tiene que preocupar: ${corto(peor.m.codigo)}, con ${peor.llevas} de ${peor.lim} (${peor.st.uso} % del límite).` : '';
+    }
+    const desconocidas = Object.entries(c).filter(([, v]) => v.desconocida && (v.inj || v.mano));
+    if (desconocidas.length) $('lista').innerHTML += `<p class="intro">Faltas en asignaturas que no salen en tu horario: ${desconocidas.map(([n, v]) => esc(n) + ' (' + (v.inj + v.mano) + ')').join(', ')}.</p>`;
 
-    $('lista').innerHTML = filas.map(({ m, k, llevas, lim, st }) => {
-      const quedan = lim - llevas, sem = quedan > 0 ? Math.floor(quedan / m.semana) : 0;
-      const extra = [k.mano ? plural(k.mano, 'a mano', 'a mano') : '', k.just ? plural(k.just, 'justificada') + ' (no cuentan)' : '', k.ret ? plural(k.ret, 'retraso') : ''].filter(Boolean).join(' · ');
-      return `<section class="asignatura ${st.e}">
-        <div><div class="nombre"><span class="codigo">${m.codigo}</span> · ${esc(m.nombre)}</div>
-        <div class="detalle">${horasDe(m.codigo)} h totales · ${m.semana} h a la semana · máximo <strong>${lim}</strong> faltas</div></div>
-        <div class="cifras"><div class="grande">${llevas} <small>/ ${lim}</small></div>${extra ? `<div class="peq">${extra}</div>` : ''}</div>
-        <div class="barra" aria-hidden="true"><span style="width:${Math.min(100, st.uso)}%"></span></div>
-        <div class="resumen"><span class="estado">${st.t}</span>
-          <span>${quedan >= 0 ? `Te quedan <strong>${quedan}</strong> faltas` : `Te has pasado en <strong>${-quedan}</strong> faltas`}</span>
-          ${quedan > 0 ? `<span>≈ ${sem >= 1 ? plural(sem, 'semana') + ' sin ir a esta asignatura' : 'menos de una semana de esta asignatura'}</span>` : ''}
-          <span>${st.uso} % del límite</span></div></section>`;
-    }).join('');
+    // Trimestre actual
+    const t = trimestreDe(new Date());
+    const dentro = f => { const [y, m, d] = f.split('-').map(Number); const x = new Date(y, m - 1, d); return x >= t.desde && x <= t.hasta; };
+    const ct = conteo(dentro);
+    const enTrim = Object.values(ct).reduce((s, k) => s + k.inj + k.mano, 0);
+    $('trimestre').innerHTML = `Estás en el <strong>${NOMBRE_TRIM[t.n]}</strong> (${HASTA_TRIM[t.n]}). En este trimestre llevas <strong>${plural(enTrim, 'falta')} injustificada${enTrim === 1 ? '' : 's'}</strong>.`;
 
-    const desconocidas = Object.entries(c).filter(([, v]) => v.desconocida);
-    if (desconocidas.length) $('lista').innerHTML += `<p class="intro">Faltas en asignaturas que la app no conoce: ${desconocidas.map(([n, v]) => esc(n) + ' (' + v.inj + ')').join(', ')}.</p>`;
-
-    const total = filas.reduce((s, x) => s + x.llevas, 0);
-    const peor = filas[0];
-    $('total').className = 'total ' + (peor ? peor.st.e : 'bien');
-    $('total-cifra').textContent = D.sync || manualesVigentes().length ? plural(total, 'falta') + ' injustificadas' : 'Sin datos todavía';
-    $('total-texto').textContent = D.sync ? `de ${horasCurso()} horas de clase del curso. Las justificadas no cuentan para la evaluación continua.` : 'Conecta Educamos para ver tus faltas.';
-    $('total-peor').textContent = peor && peor.llevas ? `La que más te tiene que preocupar: ${corto(peor.m.codigo)}, con ${peor.llevas} de ${peor.lim} (${peor.st.uso} % del límite).` : '';
-
-    pintarCambios(); pintarSimulador(c); pintarHistorial();
+    pintarCambios(); pintarHistorial();
   }
 
   const TEXTO_CAMBIO = {
@@ -135,32 +155,10 @@
       : `<p class="vacio">${D.sync ? 'Sin cambios desde que la app empezó a leer Educamos.' : 'Aparecerán aquí cuando la app lea Educamos más de una vez.'}</p>`;
   }
 
-  function pintarSimulador(c) {
-    const cont = $('dias');
-    if (!cont.children.length) {
-      Object.entries(HORARIO).forEach(([n, d]) => {
-        const b = document.createElement('button'); b.type = 'button'; b.textContent = d.nombre; b.dataset.dia = n;
-        b.addEventListener('click', () => { diaSel = n; pintarSimulador(conteo()); });
-        cont.appendChild(b);
-      });
-      const hoy = new Date().getDay();
-      diaSel = String(hoy >= 1 && hoy <= 4 ? hoy + 1 : 1);
-    }
-    [...cont.children].forEach(b => b.setAttribute('aria-pressed', String(b.dataset.dia === diaSel)));
-    const d = HORARIO[diaSel];
-    const totalH = Object.values(d.h).reduce((a, b) => a + b, 0);
-    const li = Object.entries(d.h).map(([cod, h]) => {
-      const llevas = c[cod].inj + c[cod].mano, lim = limiteDe(cod), despues = llevas + h, q = lim - despues;
-      return `<li><strong>${corto(cod)}</strong>: +${h} → ${despues} de ${lim}. ${q >= 0 ? `Te quedarían ${q}.` : `<span class="mal">Te pasarías en ${-q}.</span>`}</li>`;
-    }).join('');
-    const bc = becaCuenta(c), bl = becaLimite();
-    $('simulacion').innerHTML = `<strong>Si faltas un ${d.nombre.toLowerCase()} entero sumas ${totalH} faltas:</strong><ul>${li}</ul>
-      <p style="margin:.5rem 0 0">Beca MEC: pasarías de ${bc} a ${bc + totalH} de ${bl} horas.</p>`;
-  }
-
   function pintarHistorial() {
     const sel = $('ap-mod');
-    if (!sel.children.length) sel.innerHTML = modulos().map(m => `<option value="${m.codigo}">${corto(m.codigo)} · ${esc(m.nombre)}</option>`).join('');
+    const opciones = modulos().map(m => `<option value="${esc(m.codigo)}">${esc(corto(m.codigo))} · ${esc(m.nombre)}</option>`).join('');
+    if (sel.dataset.firma !== opciones) { sel.innerHTML = opciones; sel.dataset.firma = opciones; }
     if (!$('ap-fecha').value) $('ap-fecha').value = hoyISO();
     const dias = {};
     const dia = f => (dias[f] = dias[f] || { inj: {}, just: {}, ret: {}, mano: [], completoI: 0, completoJ: 0 });
@@ -182,41 +180,39 @@
       return `<div class="dia-hist"><div class="fecha">${fechaLarga(f)}${n ? ` · ${plural(n, 'falta')} que cuenta${n === 1 ? '' : 'n'}` : ''}</div><div class="chips">
         ${d.completoI ? `<span class="chip">Día completo (${d.completoI} h)</span>` : ''}${d.completoJ ? `<span class="chip just">Día completo justificado (${d.completoJ} h)</span>` : ''}
         ${chip(d.inj, '')}${chip(d.just, 'just')}${chip(d.ret, 'ret', ' (retraso)')}
-        ${d.mano.map(x => `<span class="chip mano">${corto(x.m)}${x.n > 1 ? ' ×' + x.n : ''} (a mano)<button type="button" data-borrar="${esc(x.id)}" aria-label="Borrar esta falta apuntada a mano">×</button></span>`).join('')}
+        ${d.mano.map(x => `<span class="chip mano">${esc(corto(x.m))}${x.n > 1 ? ' ×' + x.n : ''} (a mano)<button type="button" data-borrar="${esc(x.id)}" aria-label="Borrar esta falta apuntada a mano">×</button></span>`).join('')}
       </div></div>`;
     }).join('') : '<p class="vacio">No hay faltas.</p>';
   }
 
-  // ---------- BECA ----------
-  const becaLimite = () => Math.floor(becaHoras() * PCT_BECA / 100);
-  function becaCuenta(c) {
-    return Object.values(c).reduce((s, k) => s + k.inj + k.mano + (D.ajustes.becaContarJustificadas ? k.just : 0), 0);
-  }
+  // ---------- BECA (solo injustificadas y a mano) ----------
+  const becaLimite = () => Math.floor(horasCurso() * PCT_BECA / 100);
+  const becaCuenta = c => Object.values(c).reduce((s, k) => s + k.inj + k.mano, 0);
   function pintarBeca() {
-    const c = conteo(), cuenta = becaCuenta(c), lim = becaLimite(), horas = becaHoras();
+    const c = conteo(), cuenta = becaCuenta(c), lim = becaLimite(), horas = horasCurso();
     const st = estadoDe(cuenta, lim), quedan = lim - cuenta;
     $('beca-total').className = 'total ' + st.e;
-    $('beca-cifra').textContent = `${cuenta} de ${lim} horas`;
-    $('beca-texto').textContent = `Para no perder la beca tienes que ir al 80 % de las ${horas} horas del curso: puedes faltar como mucho ${lim} horas (20 %).` +
-      (D.ajustes.becaContarJustificadas ? ' Se cuentan injustificadas y justificadas.' : ' Solo se cuentan las injustificadas.');
+    $('beca-cifra').textContent = horas ? `${cuenta} de ${lim} horas` : 'Sin datos todavía';
+    $('beca-texto').textContent = horas ? `Para no perder la beca tienes que ir al 80 % de las ${horas} horas del curso: puedes faltar como mucho ${lim} horas (20 %). Solo se cuentan las faltas injustificadas.` : '';
     $('beca-barra').parentElement.className = 'barra grande ' + st.e;
     $('beca-barra').style.width = Math.min(100, st.uso) + '%';
-    $('beca-resumen').innerHTML = `<span class="estado ${st.e}" style="color:var(--${st.e === 'bien' ? 'bien' : st.e === 'aviso' ? 'aviso' : 'peligro'})">${st.e === 'perdida' ? 'Has pasado el 20 %' : st.t}</span>
+    $('beca-resumen').innerHTML = !horas ? '' : `<span class="estado" style="color:var(--${st.e === 'bien' ? 'bien' : st.e === 'aviso' ? 'aviso' : 'peligro'})">${st.e === 'perdida' ? 'Has pasado el 20 %' : st.t}</span>
       <span>${quedan >= 0 ? `Te quedan <strong>${quedan}</strong> horas` : `Te has pasado en <strong>${-quedan}</strong> horas`}</span>
-      ${quedan > 0 ? `<span>≈ ${plural(Math.floor(quedan / HORAS_DIA), 'día entero', 'días enteros')} de clase</span>` : ''}
+      ${quedan > 0 ? `<span>≈ ${plural(Math.floor(quedan / horasDia()), 'día entero', 'días enteros')} de clase</span>` : ''}
       <span>Has faltado al ${(cuenta / horas * 100).toFixed(1).replace('.', ',')} % del curso</span>`;
-    $('beca-just').checked = !!D.ajustes.becaContarJustificadas;
-    let ti = 0, tj = 0, tm = 0, tc = 0;
-    $('beca-tabla').innerHTML = Object.entries(c).map(([m, k]) => {
-      const cu = k.inj + k.mano + (D.ajustes.becaContarJustificadas ? k.just : 0);
-      ti += k.inj; tj += k.just; tm += k.mano; tc += cu;
-      return `<tr><td>${esc(corto(m))}</td><td>${k.inj}</td><td>${k.just}</td><td>${k.mano}</td><td>${cu}</td></tr>`;
-    }).join('') + `<tr><td><strong>Total</strong></td><td><strong>${ti}</strong></td><td><strong>${tj}</strong></td><td><strong>${tm}</strong></td><td><strong>${tc}</strong></td></tr>`;
+    let ti = 0, tm = 0, tc = 0;
+    $('beca-tabla').innerHTML = Object.entries(c).filter(([, k]) => !k.desconocida || k.inj || k.mano).map(([m, k]) => {
+      const cu = k.inj + k.mano; ti += k.inj; tm += k.mano; tc += cu;
+      return `<tr><td>${esc(corto(m))}</td><td>${k.inj}</td><td>${k.mano}</td><td>${cu}</td></tr>`;
+    }).join('') + `<tr><td><strong>Total</strong></td><td><strong>${ti}</strong></td><td><strong>${tm}</strong></td><td><strong>${tc}</strong></td></tr>`;
   }
 
   // ---------- AJUSTES ----------
+  function aplicarTema(t) { document.documentElement.dataset.tema = ['blanco', 'negro', 'azul'].includes(t) ? t : 'azul'; }
   function pintarAjustes() {
     const a = D.ajustes;
+    aplicarTema(a.tema);
+    document.querySelectorAll('input[name=tema]').forEach(r => { r.checked = r.value === (a.tema || 'azul'); });
     $('cred-estado').textContent = !D.cifradoDisponible ? 'Este ordenador no permite cifrar contraseñas, así que esta opción no está disponible.'
       : D.credFallo ? `La contraseña guardada para «${D.credUsuario}» no funcionó y he dejado de usarla para que Educamos no bloquee tu cuenta. Vuelve a guardarla.`
       : D.credUsuario ? `Guardado: entra sola como «${D.credUsuario}» cuando haga falta.` : 'No hay usuario guardado: si la sesión caduca, te avisaré para que entres tú.';
@@ -231,19 +227,17 @@
     else {
       const p = new Date(D.proximaLectura), hoy = new Date();
       const cuando = p - hoy < 90000 ? 'en un momento' : (p.toDateString() === hoy.toDateString() ? 'hoy' : p.toLocaleDateString('es-ES', { weekday: 'long', day: 'numeric', month: 'long' })) + ' a las ' + p.toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' });
-      prox = `Próxima lectura: ${cuando}. Se cuenta ${ivTxt} desde la última lectura, aunque cierres la app o apagues el ordenador.`;
+      prox = `Próxima lectura de faltas: ${cuando}. Se cuenta ${ivTxt} desde la última lectura, aunque cierres la app o apagues el ordenador. Tu curso y tu horario se revisan cada vez que abres la app.`;
     }
     $('aj-proxima').textContent = prox + (D.credUsuario && !D.credFallo ? '' : ' Mientras no guardes tu usuario y contraseña, la app entra en Educamos cada 10 minutos (sin leer las faltas) para que no se cierre la sesión.');
     $('aj-notif').checked = !!a.notificaciones;
     $('aj-ventanas').checked = !!a.mostrarVentanas;
     $('aj-inicio').checked = !!a.iniciarConWindows;
     $('aj-fondo').checked = !!a.segundoPlano;
-    if (document.activeElement !== $('aj-beca-horas')) { $('aj-beca-horas').value = a.becaHoras || ''; $('aj-beca-horas').placeholder = String(horasCurso()); }
-    $('aj-beca-nota').textContent = `Si lo dejas vacío se usa la suma de las asignaturas (${horasCurso()} h). El Proyecto intermodular se cuenta entero (55 h) aunque se reparte entre 1.º y 2.º; si en secretaría te dan otra cifra de horas del curso, ponla aquí.`;
-    if (!$('tabla-horas').contains(document.activeElement)) {
-      $('tabla-horas').innerHTML = modulos().map(m => `<tr><td>${corto(m.codigo)}</td><td>${m.semana}</td>
-        <td><input type="number" min="1" max="999" value="${horasDe(m.codigo)}" data-horas="${m.codigo}" aria-label="Horas totales de ${m.codigo}"></td><td>${limiteDe(m.codigo)}</td></tr>`).join('');
-    }
+    const cu = D.curso;
+    $('aj-curso').innerHTML = cu && cu.actualizado
+      ? `${esc(cu.etiqueta || '')}${cu.ciclo ? ' — ' + esc(cu.ciclo) : ''}. ${plural(modulos().length, 'asignatura')} de tu horario, ${horasCurso()} horas en total. Horas sacadas de la web oficial de la Junta${cu.urlHoras ? ' (' + esc(cu.urlHoras.replace(/^https?:\/\//, '')) + ')' : ''} el ${new Date(cu.actualizado).toLocaleDateString('es-ES', { day: 'numeric', month: 'long', year: 'numeric' })}.${cu.aviso ? ' <strong>' + esc(cu.aviso) + '</strong>' : ''}`
+      : 'Todavía no se ha leído tu curso. Se lee de Educamos al abrir la app.';
   }
 
   function pintarTodo() { if (!D) return; pintarSync(); pintarFaltas(); pintarBeca(); pintarAjustes(); }
@@ -268,10 +262,12 @@
   });
   $('b-cred-borrar').addEventListener('click', async () => { await window.app.borrarCredenciales(); $('cred-usuario').value = ''; $('cred-pass').value = ''; $('aj-msg').textContent = 'Usuario y contraseña borrados de este ordenador.'; });
   $('b-carpeta').addEventListener('click', () => window.app.abrirCarpeta());
+  $('b-releer-curso').addEventListener('click', async () => { await window.app.releerCurso(); $('aj-msg').textContent = 'Leyendo tu curso, tu horario y las horas oficiales…'; });
   $('b-abrir-educamos').addEventListener('click', () => { window.app.abrirEducamos(); $('aj-msg').textContent = 'Se ha abierto Educamos. Elige tu centro, cierra la ventana y pulsa «Leer Educamos ahora».'; });
   $('b-registro').addEventListener('click', () => window.app.abrirRegistro());
   $('aj-centro').addEventListener('change', e => { window.app.ajustes({ centro: e.target.value.trim() || 'Brianda de Mendoza' }); $('aj-msg').textContent = 'Centro guardado.'; });
   $('b-borrar-cambios').addEventListener('click', async () => { await window.app.borrarCambios(); $('aj-msg').textContent = 'Lista de cambios borrada.'; });
+  document.querySelectorAll('input[name=tema]').forEach(r => r.addEventListener('change', () => { aplicarTema(r.value); window.app.ajustes({ tema: r.value }); }));
 
   const ajuste = (id, clave, conv) => $(id).addEventListener('change', e => { const v = conv(e.target); window.app.ajustes({ [clave]: v }); $('aj-msg').textContent = 'Guardado.'; });
   ajuste('aj-intervalo', 'intervaloMin', t => Number(t.value));
@@ -280,22 +276,11 @@
   ajuste('aj-ventanas', 'mostrarVentanas', t => t.checked);
   ajuste('aj-inicio', 'iniciarConWindows', t => t.checked);
   ajuste('aj-fondo', 'segundoPlano', t => t.checked);
-  ajuste('beca-just', 'becaContarJustificadas', t => t.checked);
-  ajuste('aj-beca-horas', 'becaHoras', t => { const v = parseInt(t.value, 10); return v > 0 ? v : null; });
-  $('tabla-horas').addEventListener('change', e => {
-    const cod = e.target.dataset.horas; if (!cod) return;
-    const v = parseInt(e.target.value, 10);
-    const horas = Object.assign({}, D.ajustes.horas, { [cod]: v > 0 && v !== oficial(cod) ? v : undefined });
-    Object.keys(horas).forEach(k => horas[k] === undefined && delete horas[k]);
-    e.target.blur();
-    window.app.ajustes({ horas }); $('aj-msg').textContent = 'Guardado.';
-  });
-  $('b-restaurar').addEventListener('click', () => { window.app.ajustes({ horas: {} }); $('aj-msg').textContent = 'Horas oficiales restauradas.'; });
 
   $('form-apuntar').addEventListener('submit', ev => {
     ev.preventDefault();
     const f = $('ap-fecha').value, m = $('ap-mod').value, n = Math.max(1, Math.min(6, parseInt($('ap-horas').value, 10) || 1));
-    if (!f) return;
+    if (!f || !m) return;
     window.app.manuales((D.manuales || []).concat([{ id: Date.now().toString(36), f, m, n }]));
     $('ap-msg').textContent = `Apuntada: ${n} h de ${corto(m)}. Dejará de contar sola cuando salga en Educamos.`;
   });

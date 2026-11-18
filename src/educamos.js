@@ -309,8 +309,67 @@ async function asegurarCentro(seg, centro, log) {
   }
 }
 
+// ---------- Menú de Seguimiento, curso y horario ----------
+// Pulsa una opción del menú lateral por su texto (aunque el submenú esté plegado)
+async function clicMenu(seg, texto, error) {
+  const JS = `(() => {
+    const norm = s => (s||'').replace(/\\s+/g,' ').trim().toUpperCase();
+    const cands = [...document.querySelectorAll('a,li,span,div,td,button')].filter(e => norm(e.innerText || e.textContent) === ${JSON.stringify(texto)});
+    if (!cands.length) return false;
+    const el = cands.find(e => e.tagName === 'A') || cands[cands.length - 1];
+    el.click(); return true;
+  })()`;
+  const clic = await hasta(() => enFrames(seg, JS), { timeout: 20000 }).catch(() => null);
+  if (!clic) {
+    await enFrames(seg, `(() => { const e = [...document.querySelectorAll('a,li,span,div')].find(x => (x.innerText||'').replace(/\\s+/g,' ').trim().toUpperCase() === 'SEGUIMIENTO DEL CURSO'); if (e) { e.click(); return true; } return false; })()`);
+    await espera(1500);
+    await hasta(() => enFrames(seg, JS), { timeout: 15000, error });
+  }
+}
+
+// Ficha de la izquierda: CENTRO / TUTOR / CURSO (si hay varios centros, puede haber varias fichas)
+const JS_CURSO = `(() => {
+  const fichas = [];
+  for (const t of document.querySelectorAll('table')) {
+    const fila = et => [...t.querySelectorAll('tr')].find(r => { const s = r.querySelector('span'); return s && (s.textContent||'').trim().toUpperCase() === et && r.closest('table') === t; });
+    const fc = fila('CURSO'), fe = fila('CENTRO');
+    if (fc) fichas.push({ curso: fc.textContent.replace(/\\s+/g,' ').trim().replace(/^CURSO\\s*/i,''), centro: fe ? fe.textContent.replace(/\\s+/g,' ').trim().replace(/^CENTRO\\s*/i,'') : null, principal: t.id === 'tablaInicio' });
+  }
+  return fichas.length ? JSON.stringify(fichas) : null;
+})()`;
+async function leerCurso(seg, centro) {
+  const r = await hasta(() => enFrames(seg, JS_CURSO), { timeout: 20000, error: 'No encuentro tu curso en Seguimiento Educativo.' });
+  const fichas = JSON.parse(r.valor);
+  const c = normTxt(centro);
+  const f = fichas.find(x => x.centro && normTxt(x.centro).includes(c)) || fichas.find(x => x.principal) || fichas[0];
+  return f;
+}
+
+// Horario: tabla Lunes–Viernes (en cada hueco, abreviatura y profesor) y tabla «Materias» (abreviatura → nombre)
+const JS_HORARIO = `(() => {
+  if (!document.body || !/Abreviatura/i.test(document.body.innerText)) return null;
+  const tabla = [...document.querySelectorAll('table')].find(t => t.rows.length >= 2 && t.rows[0].cells.length === 6
+    && /lunes/i.test(t.rows[0].cells[1].innerText) && /viernes/i.test(t.rows[0].cells[5].innerText));
+  if (!tabla) return null;
+  const raras = [];
+  const filas = [...tabla.rows].slice(1).filter(r => { if (r.cells.length !== 6) { raras.push(r.cells.length); return false; } return true; })
+    .map(r => ({ hora: r.cells[0].innerText.trim(), dias: [...r.cells].slice(1, 6).map(c => c.innerText.split('\\n').map(x => x.trim())
+      .filter(x => x && !/^\\(.*\\)$/.test(x)).map(x => x.split(' - ')[0].trim())) }));
+  const materias = [...document.querySelectorAll('tr')].filter(r => r.cells.length === 2 && /^[A-ZÁÉÍÓÚÑ0-9]{2,10}$/.test(r.cells[0].innerText.trim()))
+    .map(r => ({ abrev: r.cells[0].innerText.trim(), nombre: r.cells[1].innerText.replace(/\\s+/g, ' ').trim() }));
+  return materias.length ? JSON.stringify({ filas, materias, raras }) : null;
+})()`;
+async function leerHorario(seg, log) {
+  log('Leyendo tu horario…');
+  await clicMenu(seg, 'HORARIO', 'No encuentro «Horario» en el menú.');
+  const r = await hasta(() => enFrames(seg, JS_HORARIO), { timeout: 30000, error: 'La página del horario no se ha abierto.' });
+  const h = JSON.parse(r.valor);
+  if (h.raras.length) log('Aviso: filas del horario con otro formato: ' + h.raras.join(','));
+  return h;
+}
+
 // ---------- Lectura completa ----------
-async function leerFaltas({ mostrar = false, cred = null, centro = 'Brianda de Mendoza', log = () => {} } = {}) {
+async function leerEducamos({ mostrar = false, cred = null, centro = 'Brianda de Mendoza', faltas = true, curso = true, log = () => {} } = {}) {
   const win = nuevaVentana(mostrar);
   const hijas = [];
   win.webContents.setWindowOpenHandler(() => ({
@@ -339,27 +398,23 @@ async function leerFaltas({ mostrar = false, cred = null, centro = 'Brianda de M
 
     await asegurarCentro(seg, centro, log);
 
-    log('Abriendo Faltas de asistencia…');
-    const JS_CLIC_FALTAS = `(() => {
-      const norm = s => (s||'').replace(/\\s+/g,' ').trim().toUpperCase();
-      const cands = [...document.querySelectorAll('a,li,span,div,td,button')].filter(e => norm(e.innerText || e.textContent) === 'FALTAS DE ASISTENCIA');
-      if (!cands.length) return false;
-      const el = cands.find(e => e.tagName === 'A') || cands[cands.length - 1];
-      el.click(); return true;
-    })()`;
-    const clic = await hasta(() => enFrames(seg, JS_CLIC_FALTAS), { timeout: 20000 }).catch(() => null);
-    if (!clic) {
-      await enFrames(seg, `(() => { const e = [...document.querySelectorAll('a,li,span,div')].find(x => (x.innerText||'').replace(/\\s+/g,' ').trim().toUpperCase() === 'SEGUIMIENTO DEL CURSO'); if (e) { e.click(); return true; } return false; })()`);
-      await espera(1500);
-      await hasta(() => enFrames(seg, JS_CLIC_FALTAS), { timeout: 15000, error: 'No encuentro «Faltas de asistencia» en el menú.' });
+    const res = {};
+    if (curso) {
+      log('Leyendo tu curso…');
+      res.curso = await leerCurso(seg, centro);
+      log('Curso: ' + (res.curso && res.curso.curso));
+      res.horario = await leerHorario(seg, log);
     }
-    await hasta(() => leerTabla(seg), { timeout: 30000, error: 'La página de faltas no se ha abierto.' });
-
-    log('Leyendo faltas injustificadas…');
-    const injust = await leerTodas(seg, 'I', log);
-    log('Leyendo faltas justificadas…');
-    const just = await leerTodas(seg, 'J', log);
-    return { injust, just };
+    if (faltas) {
+      log('Abriendo Faltas de asistencia…');
+      await clicMenu(seg, 'FALTAS DE ASISTENCIA', 'No encuentro «Faltas de asistencia» en el menú.');
+      await hasta(() => leerTabla(seg), { timeout: 30000, error: 'La página de faltas no se ha abierto.' });
+      log('Leyendo faltas injustificadas…');
+      res.injust = await leerTodas(seg, 'I', log);
+      log('Leyendo faltas justificadas…');
+      res.just = await leerTodas(seg, 'J', log);
+    }
+    return res;
   } catch (e) {
     // Para el registro: en qué páginas estaba (solo la ruta, sin datos personales)
     try {
@@ -372,4 +427,5 @@ async function leerFaltas({ mostrar = false, cred = null, centro = 'Brianda de M
   }
 }
 
-module.exports = { leerFaltas, mantenerSesion, abrirLogin, abrirEducamosVisible, cerrarSesion, ErrorEducamos };
+const leerFaltas = o => leerEducamos({ curso: false, ...o });
+module.exports = { leerEducamos, leerFaltas, mantenerSesion, abrirLogin, abrirEducamosVisible, cerrarSesion, ErrorEducamos };

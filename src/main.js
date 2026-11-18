@@ -1,8 +1,9 @@
-const { app, BrowserWindow, ipcMain, Tray, Menu, Notification, nativeImage, shell, powerMonitor, safeStorage } = require('electron');
+const { app, BrowserWindow, ipcMain, Tray, Menu, Notification, nativeImage, shell, powerMonitor, safeStorage, nativeTheme } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const educamos = require('./educamos');
-const { normalizar, comparar, MODULOS, limite, proximaLectura } = require('./logica');
+const web = require('./web');
+const { normalizar, comparar, limite, proximaLectura, interpretarCurso, horarioPorDia, construirModulos, mapaNombres, quitarTildes, RESPALDO_SMR2 } = require('./logica');
 
 // Que Educamos vea un Chrome normal
 app.userAgentFallback = app.userAgentFallback.replace(/\s?Electron\/\S+/, '').replace(/\s?control-faltas-smr\/\S+/i, '');
@@ -19,9 +20,7 @@ let estado = { sincronizando: false, paso: '', error: null, sesion: 'desconocida
 // ---------- Datos en disco ----------
 const RUTA = () => path.join(app.getPath('userData'), 'datos.json');
 const AJUSTES_DEF = {
-  horas: {},                 // horas totales por módulo cambiadas por el usuario
-  becaHoras: null,           // horas lectivas del curso para la beca (null = suma de módulos)
-  becaContarJustificadas: true,
+  tema: 'azul',              // blanco, negro o azul (azul oscuro)
   intervaloMin: 60,
   leerSiempreAlAbrir: false,  // si es false, al abrir solo lee si ya toca según el intervalo
   notificaciones: true,
@@ -30,13 +29,15 @@ const AJUSTES_DEF = {
   mostrarVentanas: false,
   centro: 'Brianda de Mendoza', // si el alumno tiene varios centros en Educamos, se lee solo este
 };
-let datos = { sync: null, ajustes: { ...AJUSTES_DEF }, manuales: [], cambios: [], credenciales: null, ultimoIntento: null };
+// config: curso, horario y horas de cada asignatura. Se lee una sola vez (la primera vez que se usa la app)
+let datos = { sync: null, ajustes: { ...AJUSTES_DEF }, manuales: [], cambios: [], credenciales: null, ultimoIntento: null, config: null };
+const FONDO = { blanco: '#FBFCFE', negro: '#000000', azul: '#141A2A' };
 
 function cargar() {
   try {
     const d = JSON.parse(fs.readFileSync(RUTA(), 'utf8'));
     datos = { ...datos, ...d, ajustes: { ...AJUSTES_DEF, ...(d.ajustes || {}) } };
-    delete datos.ajustes.sincronizarAlAbrir; // ajuste antiguo, sustituido por leerSiempreAlAbrir
+    for (const k of ['sincronizarAlAbrir', 'horas', 'becaHoras', 'becaContarJustificadas']) delete datos.ajustes[k]; // ajustes antiguos
   } catch (e) {
     if (fs.existsSync(RUTA())) { try { fs.copyFileSync(RUTA(), RUTA() + '.roto-' + Date.now()); } catch (x) {} }
   }
@@ -53,7 +54,9 @@ function guardar() {
 function publico() {
   const { credenciales, ...resto } = datos;
   const prox = cuandoToca();
-  return { ...resto, version: app.getVersion(), proximaLectura: isFinite(prox) ? new Date(Math.max(prox, Date.now())).toISOString() : null, credUsuario: credenciales ? credenciales.usuario : null, credFallo: !!(credenciales && credenciales.fallo), cifradoDisponible: safeStorage.isEncryptionAvailable(), estado, modulos: MODULOS };
+  const cf = datos.config || {};
+  const curso = cf.curso ? { etiqueta: cf.curso.etiqueta, ciclo: cf.curso.ciclo, texto: cf.curso.texto, centro: cf.centro, urlHoras: cf.urlHoras, actualizado: cf.actualizado, aviso: cf.aviso } : null;
+  return { ...resto, version: app.getVersion(), proximaLectura: isFinite(prox) ? new Date(Math.max(prox, Date.now())).toISOString() : null, credUsuario: credenciales ? credenciales.usuario : null, credFallo: !!(credenciales && credenciales.fallo), cifradoDisponible: safeStorage.isEncryptionAvailable(), estado, modulos: modulos(), horario: cf.horario || null, curso };
 }
 // ---------- Registro (para saber dónde falla; sin faltas ni contraseñas) ----------
 const RUTA_REG = () => path.join(app.getPath('userData'), 'registro.txt');
@@ -86,8 +89,8 @@ function avisar(titulo, cuerpo) {
   n.on('click', mostrar);
   n.show();
 }
-const NOMBRE_CORTO = { IALP: 'Programación', IPEII: 'IPE II', PIMSM: 'Proyecto' };
-const corto = c => NOMBRE_CORTO[c] || c;
+const modulos = () => ((datos.config && datos.config.modulos) || []).filter(m => m.horas);
+const corto = c => c;
 
 function resumenCambios(cambios) {
   const g = {};
@@ -97,10 +100,9 @@ function resumenCambios(cambios) {
 }
 
 function avisosLimite(sync) {
-  const horas = c => Number(datos.ajustes.horas[c]) || MODULOS.find(m => m.codigo === c).horas;
   const cnt = {};
   sync.injust.filter(x => !x.retraso).forEach(x => cnt[x.m] = (cnt[x.m] || 0) + 1);
-  return MODULOS.map(m => ({ m: m.codigo, n: cnt[m.codigo] || 0, lim: limite(horas(m.codigo), 25) }))
+  return modulos().map(m => ({ m: m.codigo, n: cnt[m.codigo] || 0, lim: limite(m.horas, 25) }))
     .filter(x => x.n >= x.lim * 0.75).map(x => `${corto(x.m)} ${x.n}/${x.lim}`);
 }
 
@@ -122,8 +124,9 @@ function errorDeSesion(e) {
 }
 
 // ---------- Lectura de Educamos ----------
-async function leer() {
-  return educamos.leerFaltas({
+async function leer({ curso = false } = {}) {
+  return educamos.leerEducamos({
+    curso, faltas: true,
     mostrar: datos.ajustes.mostrarVentanas, cred: credParaUsar(), centro: datos.ajustes.centro,
     log: p => { registrar(p); if (!/^(Centro en|Cambio de|Fallo en)/.test(p)) { estado.paso = p; enviar(); } },
   });
@@ -131,13 +134,61 @@ async function leer() {
 
 // Si casi todas las faltas leídas son de asignaturas que no son de SMR, seguramente se ha leído otro centro
 function comprobarAsignaturas(n) {
-  const codigos = MODULOS.map(m => m.codigo);
+  const codigos = ((datos.config && datos.config.materias) || []).map(m => m.abrev);
+  if (!codigos.length) return;
   const filas = n.injust.concat(n.just).filter(x => !x.completo);
   const raras = filas.filter(x => !codigos.includes(x.m));
   if (filas.length >= 3 && raras.length > filas.length / 2) {
     const nombres = [...new Set(raras.map(x => x.m).filter(Boolean))].slice(0, 3).join(', ');
-    throw Object.assign(new Error(`Las faltas leídas son de asignaturas que no son de 2.º SMR (${nombres}…). Seguramente Educamos estaba en otro centro. No guardo nada; revisa el centro en Ajustes.`), { codigo: 'centro' });
+    throw Object.assign(new Error(`Las faltas leídas son de asignaturas que no son de 2.º SMR (${nombres}…) que no salen en tu horario. Seguramente Educamos estaba en otro centro. No guardo nada; revisa el centro en Ajustes.`), { codigo: 'centro' });
   }
+}
+
+// ---------- Configuración: curso, horario y horas oficiales (solo la primera vez) ----------
+async function horasOficiales(curso) {
+  try {
+    const r = await web.buscarHorasOficiales(curso, p => { registrar(p); estado.paso = 'Buscando las horas oficiales de tu curso…'; enviar(); });
+    registrar(`Horas oficiales: ${r.filas.length} módulos en ${r.url}`);
+    return { url: r.url, titulo: r.titulo, filas: r.filas };
+  } catch (e) {
+    registrar('No se pudieron leer las horas oficiales: ' + e.message);
+    if (/microinform/i.test(quitarTildes(curso.ciclo)) && curso.nivel === 2) {
+      return { url: 'https://educacion.castillalamancha.es/fp/que-estudiar/tecnico-en-sistemas-microinformaticos-y-redes', titulo: 'copia guardada en la app', filas: RESPALDO_SMR2, respaldo: true };
+    }
+    return null;
+  }
+}
+
+async function montarConfig(r) {
+  const curso = interpretarCurso(r.curso.curso);
+  const materias = r.horario.materias;
+  const horario = horarioPorDia(r.horario.filas, materias);
+  const of = await horasOficiales(curso);
+  const cfg = { curso, centro: r.curso.centro, materias, horario, actualizado: new Date().toISOString(), modulos: [], urlHoras: of && of.url, aviso: null };
+  if (of) {
+    const m = construirModulos({ materias, horario, oficiales: of.filas, nivel: curso.nivel });
+    cfg.modulos = m.modulos;
+    if (m.sinHoras.length) cfg.aviso = 'No he encontrado las horas oficiales de: ' + m.sinHoras.join(', ') + '.';
+    if (of.respaldo) cfg.aviso = 'La web oficial no respondía; se han usado las horas guardadas en la app. Lo intentaré otra vez en la próxima lectura.';
+    cfg.pendienteHoras = !!of.respaldo;
+  } else {
+    cfg.modulos = materias.map(x => ({ codigo: x.abrev, nombre: x.nombre, semana: Object.values(horario).reduce((s, d) => s + (d[x.abrev] || 0), 0), horas: null }));
+    cfg.aviso = 'No he podido leer las horas oficiales de tu curso. Lo intentaré otra vez en la próxima lectura.';
+    cfg.pendienteHoras = true;
+  }
+  registrar(`Curso: ${curso.texto} · ${cfg.modulos.length} asignaturas · ${cfg.modulos.reduce((s, x) => s + (x.horas || 0), 0)} h${cfg.aviso ? ' · ' + cfg.aviso : ''}`);
+  return cfg;
+}
+
+// Si la primera vez no se pudieron leer las horas oficiales, se vuelve a probar (sin tocar Educamos)
+async function reintentarHoras() {
+  const cfg = datos.config;
+  if (!cfg || !cfg.pendienteHoras) return;
+  const of = await horasOficiales(cfg.curso);
+  if (!of || of.respaldo) return;
+  const m = construirModulos({ materias: cfg.materias, horario: cfg.horario, oficiales: of.filas, nivel: cfg.curso.nivel });
+  Object.assign(cfg, { modulos: m.modulos, urlHoras: of.url, pendienteHoras: false, actualizado: new Date().toISOString(),
+    aviso: m.sinHoras.length ? 'No he encontrado las horas oficiales de: ' + m.sinHoras.join(', ') + '.' : null });
 }
 
 async function sincronizar(origen) {
@@ -145,9 +196,16 @@ async function sincronizar(origen) {
   estado = { ...estado, sincronizando: true, paso: 'Empezando…', error: null };
   registrar(`--- Lectura (${origen}) · versión ${app.getVersion()}`);
   enviar();
+  const configAnterior = datos.config;
   try {
-    let r = await leer();
-    let nuevo = { actualizado: new Date().toISOString(), injust: normalizar(r.injust), just: normalizar(r.just) };
+    const necesitaCurso = !datos.config || datos.releerCurso;
+    let r = await leer({ curso: necesitaCurso });
+    let config = datos.config;
+    if (necesitaCurso) config = await montarConfig(r);
+    else await reintentarHoras();
+    const opc = () => ({ nombres: mapaNombres(config.materias), horario: config.horario });
+    let nuevo = { actualizado: new Date().toISOString(), injust: normalizar(r.injust, opc()), just: normalizar(r.just, opc()) };
+    datos.config = config;
     comprobarAsignaturas(nuevo);
     // Si de golpe desaparecen muchas faltas, se lee otra vez para confirmar antes de guardar
     const prevTotal = datos.sync ? datos.sync.injust.length + datos.sync.just.length : 0;
@@ -155,7 +213,7 @@ async function sincronizar(origen) {
     if (datos.sync && prevTotal - nuevoTotal >= Math.max(5, prevTotal * 0.2)) {
       estado.paso = 'Han desaparecido muchas faltas: lo compruebo otra vez…'; enviar();
       const r2 = await leer();
-      const n2 = { injust: normalizar(r2.injust), just: normalizar(r2.just) };
+      const n2 = { injust: normalizar(r2.injust, opc()), just: normalizar(r2.just, opc()) };
       if (n2.injust.length !== nuevo.injust.length || n2.just.length !== nuevo.just.length) {
         throw Object.assign(new Error('Dos lecturas seguidas de Educamos no coinciden. No guardo nada; lo intento en la próxima lectura.'), { codigo: 'dudosa' });
       }
@@ -166,12 +224,14 @@ async function sincronizar(origen) {
     if (cambios.length) datos.cambios = cambios.concat(datos.cambios || []).slice(0, 300);
     registrar(`Lectura correcta: ${nuevo.injust.length} horas injustificadas, ${nuevo.just.length} justificadas, ${cambios.length} cambios`);
     datos.ultimoIntento = { t: nuevo.actualizado, ok: true };
+    delete datos.releerCurso;
     guardar();
     estado = { sincronizando: false, paso: '', error: null, sesion: 'ok' };
     if (cambios.length) avisar('Cambios en tus faltas', resumenCambios(cambios));
     const lim = avisosLimite(nuevo).filter(x => !anteriorLimite.includes(x));
     if (lim.length && cambios.some(c => c.tipo === 'nueva')) avisar('Cuidado con el límite', 'Pasas del 75 % en: ' + lim.join(', '));
   } catch (e) {
+    datos.config = configAnterior; // si algo falla, no se queda una configuración a medias
     estado = { ...estado, sincronizando: false, paso: '', error: e.message || String(e) };
     registrar(`ERROR ${e.codigo || ''}: ${e.message || e}`);
     errorDeSesion(e);
@@ -222,7 +282,7 @@ function accesoMenuInicio() {
 function crearVentana(oculta) {
   win = new BrowserWindow({
     width: 1000, height: 780, minWidth: 420, minHeight: 500, show: !oculta,
-    title: 'Control de faltas SMR', icon: ICONO, backgroundColor: '#FBFCFE',
+    title: 'Control de faltas SMR', icon: ICONO, backgroundColor: FONDO[datos.ajustes.tema] || FONDO.azul,
     webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true, nodeIntegration: false, sandbox: true },
   });
   win.setMenuBarVisibility(false);
@@ -262,9 +322,12 @@ function crearTray() {
 ipcMain.handle('datos:get', () => publico());
 ipcMain.handle('ajustes:set', (_e, parcial) => {
   for (const k of Object.keys(parcial || {})) if (k in AJUSTES_DEF) datos.ajustes[k] = parcial[k];
+  if (parcial && 'tema' in parcial && win) win.setBackgroundColor(FONDO[datos.ajustes.tema] || FONDO.azul);
   guardar(); aplicarInicioWindows(); enviar(); comprobar();
   return true;
 });
+// Volver a leer curso, horario y horas oficiales (solo si el usuario lo pide; normalmente se hace una vez)
+ipcMain.handle('config:releer', () => { datos.releerCurso = true; sincronizar('curso y horario'); return true; });
 ipcMain.handle('manuales:set', (_e, lista) => {
   datos.manuales = Array.isArray(lista) ? lista.slice(0, 500).map(x => ({ id: String(x.id), f: String(x.f).slice(0, 10), m: String(x.m).slice(0, 20), n: Math.max(1, Math.min(6, Number(x.n) || 1)) })) : [];
   guardar(); enviar(); return true;
@@ -303,7 +366,8 @@ if (!app.requestSingleInstanceLock()) {
     aplicarInicioWindows();
     accesoMenuInicio();
     programar();
-    setTimeout(() => { if (datos.ajustes.leerSiempreAlAbrir) sincronizar('inicio'); else comprobar(); }, 2500);
+    // Primera vez (app nueva): se lee curso, horario y faltas. Después, solo cuando toque.
+    setTimeout(() => { if (!datos.config || datos.ajustes.leerSiempreAlAbrir) sincronizar(datos.config ? 'inicio' : 'primera configuración'); else comprobar(); }, 2500);
     // Al despertar el ordenador solo se lee si ya tocaba
     powerMonitor.on('resume', () => setTimeout(comprobar, 20000));
     if (PRUEBAS && process.env.FALTAS_CAPTURA) capturasDePrueba(process.env.FALTAS_CAPTURA);
@@ -327,11 +391,17 @@ async function guionDePrueba(ruta) {
 // Solo para pruebas del desarrollador: guarda capturas de las tres pestañas
 async function capturasDePrueba(dir) {
   await new Promise(r => setTimeout(r, Number(process.env.FALTAS_CAPTURA_ESPERA || 30000)));
-  for (const v of ['faltas', 'beca', 'ajustes']) {
-    await win.webContents.executeJavaScript(`document.querySelector('[data-vista=${v}]').click()`);
-    await new Promise(r => setTimeout(r, 600));
-    const img = await win.webContents.capturePage();
-    fs.writeFileSync(path.join(dir, v + '.png'), img.toPNG());
+  for (const tema of (process.env.FALTAS_TEMAS || datos.ajustes.tema).split(',')) {
+    await win.webContents.executeJavaScript(`window.app.ajustes({ tema: ${JSON.stringify(tema)} })`);
+    for (const v of ['faltas', 'beca', 'ajustes']) {
+      await win.webContents.executeJavaScript(`document.querySelector('[data-vista=${v}]').click()`);
+      await new Promise(r => setTimeout(r, 600));
+      const img = await win.webContents.capturePage();
+      fs.writeFileSync(path.join(dir, tema + '-' + v + '.png'), img.toPNG());
+    }
+    await win.webContents.executeJavaScript(`document.querySelector('[name=tema]').closest('section,div').scrollIntoView()`);
+    await new Promise(r => setTimeout(r, 400));
+    fs.writeFileSync(path.join(dir, tema + '-ajustes2.png'), (await win.webContents.capturePage()).toPNG());
   }
   saliendo = true; app.quit();
 }

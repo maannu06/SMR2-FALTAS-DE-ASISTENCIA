@@ -1,16 +1,20 @@
-:root {
+:root, :root[data-tema="blanco"] {
   --papel: #FBFCFE; --tinta: #1F3A93; --texto: #1C2333; --lapiz: #5B6270;
   --raya: #DCE3F2; --margen: #D64545; --campo: #FFFFFF; --borde: #B9C3DA;
   --bien: #2E7D4F; --aviso: #B7791F; --peligro: #C2410C; --sobre-tinta: #FFFFFF; --suave: #EEF2FA;
   color-scheme: light;
 }
-@media (prefers-color-scheme: dark) {
-  :root {
-    --papel: #141A2A; --tinta: #9DB4FF; --texto: #E6EAF4; --lapiz: #A3ABBD;
-    --raya: #2A3350; --margen: #E06666; --campo: #1C2438; --borde: #3A4566;
-    --bien: #5FC08A; --aviso: #E3B04B; --peligro: #F2875A; --sobre-tinta: #141A2A; --suave: #1A2236;
-    color-scheme: dark;
-  }
+:root[data-tema="azul"] {
+  --papel: #141A2A; --tinta: #9DB4FF; --texto: #E6EAF4; --lapiz: #A3ABBD;
+  --raya: #2A3350; --margen: #E06666; --campo: #1C2438; --borde: #3A4566;
+  --bien: #5FC08A; --aviso: #E3B04B; --peligro: #F2875A; --sobre-tinta: #141A2A; --suave: #1A2236;
+  color-scheme: dark;
+}
+:root[data-tema="negro"] {
+  --papel: #000000; --tinta: #E8E8E8; --texto: #F2F2F2; --lapiz: #A6A6A6;
+  --raya: #2B2B2B; --margen: #C94A4A; --campo: #111111; --borde: #3D3D3D;
+  --bien: #5FC08A; --aviso: #E3B04B; --peligro: #F2875A; --sobre-tinta: #000000; --suave: #161616;
+  color-scheme: dark;
 }
 * { box-sizing: border-box; }
 html, body { margin: 0; background: var(--papel); color: var(--texto); }
@@ -129,3 +133,10 @@ td input[type=number] { width: 6rem; height: 2rem; text-align: right; }
   .cifras { text-align: left; }
 }
 @media (prefers-reduced-motion: reduce) { .barra span { transition: none; } .sync.leyendo .punto { animation: none; } }
+
+.trimestre { margin: .8rem 0 0; padding: .6rem .9rem; border-radius: 6px; background: var(--suave); font-size: .95rem; }
+.temas { display: flex; gap: .8rem; flex-wrap: wrap; }
+.tema { display: flex; align-items: center; gap: .5rem; padding: .5rem .8rem; border: 2px solid var(--borde); border-radius: 6px; cursor: pointer; color: var(--texto); font-size: .95rem; margin: 0; }
+.tema:has(input:checked) { border-color: var(--tinta); }
+.muestra { width: 1.4rem; height: 1.4rem; border-radius: 4px; border: 1px solid #888; display: inline-block; }
+.muestra.blanco { background: #FBFCFE; } .muestra.negro { background: #000; } .muestra.azul { background: #141A2A; }

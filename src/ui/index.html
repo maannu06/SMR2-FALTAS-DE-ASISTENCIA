@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="es">
+<html lang="es" data-tema="azul">
 <head>
 <meta charset="UTF-8">
 <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:">
@@ -12,7 +12,7 @@
   <div class="cabecera">
     <div>
       <h1>Control de faltas</h1>
-      <p class="sub">2.º SMR · IES Brianda de Mendoza</p>
+      <p class="sub" id="sub-curso">IES Brianda de Mendoza</p>
     </div>
     <div class="sync" id="sync" aria-live="polite">
       <span class="punto"></span><span id="sync-texto">Cargando…</span>
@@ -40,6 +40,7 @@
       <p id="total-texto"></p>
       <p class="peor" id="total-peor"></p>
     </div>
+    <p class="trimestre" id="trimestre"></p>
 
     <h2>Por asignatura <small>(límite: 25 % de las horas de cada una)</small></h2>
     <div id="lista"></div>
@@ -47,11 +48,6 @@
     <h2>Cambios que ha detectado la app</h2>
     <p class="intro">Faltas nuevas, faltas que te han justificado y faltas que han quitado de Educamos.</p>
     <div id="cambios"></div>
-
-    <h2>¿Y si falto?</h2>
-    <p class="intro">Elige un día y te digo cuántas faltas sumarías en cada asignatura si faltas ese día entero.</p>
-    <div class="dias" id="dias"></div>
-    <div class="simulacion" id="simulacion" aria-live="polite"></div>
 
     <h2>Historial</h2>
     <details class="mano-caja">
@@ -78,11 +74,9 @@
     <div class="beca-barra"><div class="barra grande" aria-hidden="true"><span id="beca-barra"></span></div></div>
     <div class="resumen-beca" id="beca-resumen"></div>
 
-    <label class="check"><input type="checkbox" id="beca-just"> Contar también las faltas justificadas <small>(recomendado: la norma de la beca no dice que no cuenten)</small></label>
-
     <h2>Desglose</h2>
     <div class="tabla-wrap"><table>
-      <thead><tr><th>Asignatura</th><th>Injustificadas</th><th>Justificadas</th><th>A mano</th><th>Cuentan para la beca</th></tr></thead>
+      <thead><tr><th>Asignatura</th><th>Injustificadas</th><th>A mano</th><th>Cuentan para la beca</th></tr></thead>
       <tbody id="beca-tabla"></tbody>
     </table></div>
 
@@ -94,7 +88,7 @@
         <li>No aprobar al menos el <strong>50 %</strong> de las asignaturas u horas matriculadas (en ordinaria o extraordinaria).</li>
         <li>Darte de baja del centro antes de que acabe el curso.</li>
       </ul>
-      <p>La norma no dice que las faltas justificadas no cuenten. Por eso, para ir a lo seguro, la app las suma. Si en secretaría te dicen que solo cuentan las injustificadas, quita la marca de arriba.</p>
+      <p>La app cuenta <strong>solo las faltas injustificadas</strong> (y las que apuntes a mano). Las justificadas no se suman.</p>
       <p>Esto es distinto de la <strong>evaluación continua</strong> (pestaña Faltas): ahí el límite es el 25 % de cada asignatura y las justificadas no cuentan (Orden 201/2024 de Castilla-La Mancha).</p>
     </div>
   </section>
@@ -142,19 +136,17 @@
     <label class="check"><input type="checkbox" id="aj-inicio"> Abrir la app al encender el ordenador (se queda junto al reloj)</label>
     <label class="check"><input type="checkbox" id="aj-fondo"> Al cerrar la ventana, seguir funcionando junto al reloj</label>
 
-    <h2>Horas de cada asignatura</h2>
-    <p class="intro">Vienen de la tabla oficial de la Junta para SMR. Si un profesor te da otra cifra, cámbiala aquí.</p>
-    <div class="tabla-wrap"><table>
-      <thead><tr><th>Asignatura</th><th>h/semana</th><th>Horas totales</th><th>Máximo (25 %)</th></tr></thead>
-      <tbody id="tabla-horas"></tbody>
-    </table></div>
-    <button type="button" class="boton" id="b-restaurar">Volver a las horas oficiales</button>
-
-    <h2>Beca MEC</h2>
-    <div class="campos">
-      <div><label for="aj-beca-horas">Horas lectivas del curso</label><input type="number" id="aj-beca-horas" min="100" max="2000"></div>
+    <h2>Tema</h2>
+    <div class="temas" role="radiogroup" aria-label="Tema de la app">
+      <label class="tema"><input type="radio" name="tema" value="blanco"><span class="muestra blanco"></span>Blanco</label>
+      <label class="tema"><input type="radio" name="tema" value="negro"><span class="muestra negro"></span>Negro</label>
+      <label class="tema"><input type="radio" name="tema" value="azul"><span class="muestra azul"></span>Azul oscuro</label>
     </div>
-    <p class="intro" id="aj-beca-nota"></p>
+
+    <h2>Tu curso</h2>
+    <p class="intro" id="aj-curso"></p>
+    <p class="nota">El curso, el horario y las horas se leen solos la primera vez. Solo hace falta volver a leerlos si cambias de curso o de horario.</p>
+    <div class="botones"><button type="button" class="boton" id="b-releer-curso">Volver a leer curso y horario</button></div>
 
     <h2>Datos</h2>
     <div class="botones">

@@ -1,57 +1,93 @@
 // Cálculos y comparación de faltas (sin dependencias de Electron, para poder probarlo).
-
-const MODULOS = [
-  { codigo: 'SRED',  nombre: 'Sistemas operativos en red',                   semana: 6, horas: 223 },
-  { codigo: 'APOF',  nombre: 'Aplicaciones ofimáticas',                      semana: 7, horas: 270 },
-  { codigo: 'SR',    nombre: 'Servicios en red',                             semana: 5, horas: 205 },
-  { codigo: 'SEIN',  nombre: 'Seguridad informática',                        semana: 4, horas: 167 },
-  { codigo: 'IALP',  nombre: 'Introducción a la programación (optativa)',    semana: 4, horas: 80  },
-  { codigo: 'IPEII', nombre: 'Itinerario personal para la empleabilidad II', semana: 3, horas: 60  },
-  { codigo: 'PIMSM', nombre: 'Proyecto intermodular de SMR',                 semana: 1, horas: 55  },
-];
-
-// Horas de cada asignatura por día de la semana (horario de Educamos, curso 26/27). 1 = lunes.
-const HORARIO = {
-  1: { APOF: 1, IPEII: 1, SRED: 2, SR: 2 },
-  2: { IALP: 2, SEIN: 2, APOF: 2 },
-  3: { SR: 1, IALP: 2, IPEII: 1, SRED: 2 },
-  4: { PIMSM: 1, SEIN: 2, APOF: 2, IPEII: 1 },
-  5: { SR: 2, SRED: 2, APOF: 2 },
-};
+//
+// Las asignaturas, el horario y las horas de cada asignatura ya no van escritos aquí: la app los lee
+// de Educamos (curso y horario) y de la web oficial de FP de Castilla-La Mancha (horas). Lo que hay
+// abajo como «RESPALDO_SMR2» solo se usa si la web oficial no responde y el curso es 2.º de SMR.
 
 const quitarTildes = s => (s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/\s+/g, ' ').trim();
-const NOMBRES = {
-  'introduccion a la programacion': 'IALP',
-  'sistemas operativos en red': 'SRED',
-  'servicios en red': 'SR',
-  'itinerario personal para la empleabilidad ii': 'IPEII',
-  'seguridad informatica': 'SEIN',
-  'aplicaciones ofimaticas': 'APOF',
-  'proyecto intermodular de sistemas microinformaticos y redes': 'PIMSM',
-};
-function codigoDe(nombre) {
-  const n = quitarTildes(nombre);
-  if (NOMBRES[n]) return NOMBRES[n];
-  const k = Object.keys(NOMBRES).find(x => n.startsWith(x) || x.startsWith(n));
-  return k ? NOMBRES[k] : nombre; // desconocido: se guarda el nombre tal cual
+
+// Copia de seguridad: tabla oficial de 2.º SMR (educacion.castillalamancha.es, noviembre de 2026)
+const RESPALDO_SMR2 = [
+  { nombre: 'Aplicaciones ofimáticas', horas: 270, semana: 7 },
+  { nombre: 'Sistemas operativos en red', horas: 223, semana: 6 },
+  { nombre: 'Seguridad informática', horas: 167, semana: 4 },
+  { nombre: 'Servicios en red', horas: 205, semana: 5 },
+  { nombre: 'Itinerario personal para la empleabilidad II', horas: 60, semana: 3 },
+  { nombre: 'Optatividad', horas: 80, semana: 4 },
+  { nombre: 'Proyecto intermodular de Sistemas microinformáticos y redes', horas: 55, semana: 1 },
+];
+
+// «2º de CFGM (LOFP) - Sistemas Microinformáticos y Redes / CSMR2D» → { nivel: 2, tipo: 'CFGM', ciclo: 'Sistemas Microinformáticos y Redes', grupo: 'CSMR2D' }
+function interpretarCurso(texto) {
+  const t = (texto || '').replace(/\s+/g, ' ').trim();
+  const nivel = parseInt((t.match(/^(\d)\s*[ºo°]/) || [])[1], 10) || null;
+  const tipo = (t.match(/\b(CFGM|CFGS|CFGB|FPB|CE)\b/i) || [])[1] || null;
+  let resto = t.includes(' - ') ? t.slice(t.indexOf(' - ') + 3) : t;
+  const grupo = resto.includes(' / ') ? resto.slice(resto.lastIndexOf(' / ') + 3).trim() : null;
+  if (grupo) resto = resto.slice(0, resto.lastIndexOf(' / '));
+  const ciclo = resto.replace(/\(.*?\)/g, '').trim();
+  const nombreTipo = { CFGM: 'Grado Medio', CFGS: 'Grado Superior', CFGB: 'Grado Básico', FPB: 'FP Básica', CE: 'Curso de especialización' }[(tipo || '').toUpperCase()] || '';
+  const siglas = ciclo.split(/\s+/).filter(p => p.length > 2 && !/^(de|del|la|las|los|en|para|con|por)$/i.test(p)).map(p => p[0].toUpperCase()).join('');
+  return { texto: t, nivel, tipo: tipo && tipo.toUpperCase(), ciclo, grupo, etiqueta: `${nivel ? nivel + '.º ' : ''}${siglas || ciclo}`, nombreTipo };
+}
+
+// Horario leído de Educamos → { 1: { APOF: 1, SRED: 2, … }, … } (1 = lunes) contando solo asignaturas de «Materias».
+// En una misma hora puede salir la misma asignatura dos veces (dos profesores): cuenta una vez.
+function horarioPorDia(filas, materias) {
+  const validas = new Set(materias.map(m => m.abrev));
+  const h = { 1: {}, 2: {}, 3: {}, 4: {}, 5: {} };
+  filas.forEach(f => f.dias.forEach((asigs, i) => {
+    new Set(asigs.filter(a => validas.has(a))).forEach(a => { h[i + 1][a] = (h[i + 1][a] || 0) + 1; });
+  }));
+  return h;
+}
+
+// Junta las asignaturas del horario con las horas de la tabla oficial.
+// filasOficiales: [{ nombre: '0223. Aplicaciones ofimáticas', horas: 270, semana: [7, 0] }] (semana por curso)
+function construirModulos({ materias, horario, oficiales, nivel }) {
+  const semanaDe = cod => Object.values(horario).reduce((s, d) => s + (d[cod] || 0), 0);
+  const limpia = n => quitarTildes(n).replace(/^\d+\.\s*/, '').replace(/\s*\(.*?\)\s*/g, ' ').trim();
+  const usadas = new Set();
+  const modulos = [], sinHoras = [];
+  for (const m of materias) {
+    const n = limpia(m.nombre);
+    let of = oficiales.find(o => !usadas.has(o) && limpia(o.nombre) === n)
+      || oficiales.find(o => !usadas.has(o) && (limpia(o.nombre).startsWith(n) || n.startsWith(limpia(o.nombre))) && limpia(o.nombre).length > 6);
+    if (of) usadas.add(of);
+    modulos.push({ codigo: m.abrev, nombre: m.nombre, semana: semanaDe(m.abrev), horas: of ? of.horas : null, oficial: of ? of.nombre : null });
+  }
+  // Las que no salen con su nombre en la tabla oficial suelen ser la optativa («Optatividad»)
+  const opt = oficiales.find(o => /^optativ/.test(limpia(o.nombre)) && !usadas.has(o));
+  const sin = modulos.filter(x => x.horas == null);
+  if (opt && sin.length === 1) { sin[0].horas = opt.horas; sin[0].oficial = opt.nombre; sin[0].nombre += ' (optativa)'; }
+  // Si aún falta alguna, se calcula con sus horas semanales y las semanas del curso (aviso)
+  modulos.filter(x => x.horas == null).forEach(x => { sinHoras.push(x.nombre); });
+  return { modulos: modulos.filter(x => x.semana > 0 || x.horas != null), sinHoras, nivel };
 }
 
 // filas de Educamos: [fecha dd/mm/aaaa, módulo o «Día completo», retraso, motivo, notificada]
 // Un «Día completo» se reparte en las horas que tocan ese día según el horario.
-function normalizar(filas) {
+// nombres: { 'aplicaciones ofimaticas': 'APOF', … } sacado de la tabla «Materias» del horario.
+function normalizar(filas, { nombres = {}, horario = {} } = {}) {
+  const codigoDe = nombre => {
+    const n = quitarTildes(nombre);
+    if (nombres[n]) return nombres[n];
+    const k = Object.keys(nombres).find(x => n.startsWith(x) || x.startsWith(n));
+    return k ? nombres[k] : nombre; // desconocido: se guarda el nombre tal cual
+  };
   const out = [];
   filas.forEach(c => {
     const [d, m, a] = (c[0] || '').split('/');
     const f = `${a}-${m}-${d}`, retraso = /^s/i.test((c[2] || '').trim());
     if (/^dia completo$/.test(quitarTildes(c[1]))) {
-      const dia = new Date(+a, +m - 1, +d).getDay();
-      const h = HORARIO[dia];
-      if (h) Object.entries(h).forEach(([cod, n]) => { for (let i = 0; i < n; i++) out.push({ f, m: cod, retraso, completo: true }); });
+      const h = horario[new Date(+a, +m - 1, +d).getDay()];
+      if (h && Object.keys(h).length) Object.entries(h).forEach(([cod, n]) => { for (let i = 0; i < n; i++) out.push({ f, m: cod, retraso, completo: true }); });
       else for (let i = 0; i < 6; i++) out.push({ f, m: 'Día completo', retraso, completo: true });
     } else out.push({ f, m: codigoDe(c[1]), retraso });
   });
   return out;
 }
+const mapaNombres = materias => Object.fromEntries((materias || []).map(m => [quitarTildes(m.nombre).replace(/\s*\(optativa\)$/, ''), m.abrev || m.codigo]));
 
 const clave = x => x.f + '|' + x.m;
 function contar(lista) { const c = new Map(); lista.forEach(x => c.set(clave(x), (c.get(clave(x)) || 0) + 1)); return c; }
@@ -80,12 +116,9 @@ function comparar(prev, nuevo) {
   return cambios.sort((a, b) => b.f.localeCompare(a.f));
 }
 
-function limite(horas, pct) { return Math.floor(horas * pct / 100); }
+function limite(horas, pct) { return Math.floor((horas || 0) * pct / 100); }
 
-// Cuándo toca la próxima lectura automática (en milisegundos desde 1970).
-// - Se cuenta desde la última lectura buena, aunque la app se haya cerrado o el ordenador se haya apagado.
-// - Si el último intento falló (sin internet, Educamos caído…), se reintenta en 30 min (o antes si el intervalo es menor).
-// - Si falló porque hay que iniciar sesión y no hay contraseña guardada, no se reintenta solo: espera al usuario.
+// Cuándo toca la próxima lectura automática de faltas (en milisegundos desde 1970).
 const REINTENTO_MIN = 30;
 function proximaLectura({ ultimaBuena, ultimoIntento, intervaloMin }) {
   const iv = Math.max(15, Number(intervaloMin) || 60) * 60000;
@@ -98,4 +131,4 @@ function proximaLectura({ ultimaBuena, ultimoIntento, intervaloMin }) {
   return prox;
 }
 
-module.exports = { proximaLectura, MODULOS, HORARIO, codigoDe, normalizar, comparar, limite };
+module.exports = { quitarTildes, interpretarCurso, horarioPorDia, construirModulos, normalizar, mapaNombres, comparar, limite, proximaLectura, RESPALDO_SMR2 };
